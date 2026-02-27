@@ -24,6 +24,9 @@ final class AppState: ObservableObject {
     // MARK: - Filter
     @Published var filterPattern: String = ""
     @Published var filteredObjects: [S3Object] = []
+    /// 过滤激活时全量加载的所有对象（跨分页）
+    @Published var allObjects: [S3Object] = []
+    @Published var isLoadingAll: Bool = false
 
     // MARK: - Download
     @Published var downloadTasks: [DownloadTask] = []
@@ -57,7 +60,15 @@ final class AppState: ObservableObject {
     private var objectCache: [String: CachedPage] = [:]
     private let cacheTTL: TimeInterval = 300  // 5 分钟
 
+    /// 全量对象缓存（用于跨分页过滤），key = "bucket\0prefix\0all"
+    private struct AllObjectsCache {
+        let objects: [S3Object]
+        let timestamp: Date
+    }
+    private var allObjectsCache: [String: AllObjectsCache] = [:]
+
     private func cacheKey(bucket: String, prefix: String) -> String { "\(bucket)\0\(prefix)" }
+    private func allCacheKey(bucket: String, prefix: String) -> String { "\(bucket)\0\(prefix)\0all" }
 
     private var filterCancellable: AnyCancellable?
 
@@ -65,11 +76,16 @@ final class AppState: ObservableObject {
         self.downloadManager = DownloadManager()
         self.isUploadEnabled = false
 
-        // 监听 filter 变化，实时过滤
+        // 监听 filter 变化：空则直接过滤当前页；非空则全量加载后过滤
         filterCancellable = $filterPattern
             .debounce(for: .milliseconds(300), scheduler: RunLoop.main)
             .sink { [weak self] pattern in
-                self?.applyFilter(pattern: pattern)
+                guard let self else { return }
+                if pattern.isEmpty {
+                    self.filteredObjects = self.objects
+                } else {
+                    Task { await self.loadAllAndFilter(pattern: pattern) }
+                }
             }
     }
 
@@ -80,10 +96,13 @@ final class AppState: ObservableObject {
         selectedBucket = nil
         currentPrefix = ""
         objects = []
+        allObjects = []
         buckets = []
         currentPage = 1
         continuationToken = nil
-        objectCache.removeAll()  // 切换环境时清空缓存
+        filterPattern = ""
+        objectCache.removeAll()
+        allObjectsCache.removeAll()  // 切换环境时清空全量缓存
 
         do {
             let credentials = try credentialsManager.loadCredentials(for: env)
@@ -148,6 +167,7 @@ final class AppState: ObservableObject {
 
         if reset {
             objects = []
+            allObjects = []  // 进入新目录时清空全量缓存
             continuationToken = nil
             currentPage = 1
         }
@@ -233,18 +253,67 @@ final class AppState: ObservableObject {
 
     // MARK: - Filter
 
-    func applyFilter(pattern: String) {
-        guard !pattern.isEmpty else {
-            filteredObjects = objects
+    /// 全量加载当前目录所有分页，然后在全量结果上应用过滤（最多 50 页 × 1000 = 50,000 条）
+    func loadAllAndFilter(pattern: String) async {
+        guard let service = s3Service, let bucket = selectedBucket, !pattern.isEmpty else { return }
+        let prefix = currentPrefix
+        let key = allCacheKey(bucket: bucket, prefix: prefix)
+
+        // 命中全量缓存则直接过滤
+        if let cached = allObjectsCache[key],
+           Date().timeIntervalSince(cached.timestamp) < cacheTTL {
+            allObjects = cached.objects
+            applyFilterToSource(cached.objects, pattern: pattern)
+            appLogger.log(action: "过滤(缓存)", detail: "共 \(cached.objects.count) 条，pattern=\(pattern)", level: .info)
             return
         }
+
+        isLoadingAll = true
+        defer { isLoadingAll = false }
+
+        var accumulated: [S3Object] = []
+        var token: String? = nil
+        var pageCount = 0
+        let maxPages = 50
+
+        do {
+            repeat {
+                let result = try await service.listObjects(
+                    bucket: bucket, prefix: prefix,
+                    continuationToken: token, pageSize: 1000
+                )
+                accumulated.append(contentsOf: result.objects)
+                token = result.nextToken
+                pageCount += 1
+            } while token != nil && pageCount < maxPages
+
+            allObjects = accumulated
+            allObjectsCache[key] = AllObjectsCache(objects: accumulated, timestamp: Date())
+            applyFilterToSource(accumulated, pattern: pattern)
+            appLogger.log(action: "全量加载", detail: "s3://\(bucket)/\(prefix) 共 \(accumulated.count) 条", level: .info)
+        } catch {
+            appLogger.log(action: "全量加载失败", detail: error.localizedDescription, level: .error)
+        }
+    }
+
+    func applyFilter(pattern: String) {
+        if pattern.isEmpty {
+            filteredObjects = objects
+        } else if !allObjects.isEmpty {
+            applyFilterToSource(allObjects, pattern: pattern)
+        } else {
+            applyFilterToSource(objects, pattern: pattern)
+        }
+    }
+
+    private func applyFilterToSource(_ source: [S3Object], pattern: String) {
         if let regex = try? NSRegularExpression(pattern: pattern, options: .caseInsensitive) {
-            filteredObjects = objects.filter { obj in
+            filteredObjects = source.filter { obj in
                 let name = obj.displayName
                 return regex.firstMatch(in: name, range: NSRange(name.startIndex..., in: name)) != nil
             }
         } else {
-            filteredObjects = objects.filter { $0.displayName.localizedCaseInsensitiveContains(pattern) }
+            filteredObjects = source.filter { $0.displayName.localizedCaseInsensitiveContains(pattern) }
         }
     }
 

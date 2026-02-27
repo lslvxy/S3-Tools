@@ -11,8 +11,8 @@ struct PathInputView: View {
 
     var body: some View {
         VStack(spacing: 6) {
-            HStack(spacing: 8) {
-                // 面包屑或路径输入
+            HStack(spacing: 6) {
+                // ── 路径输入（弹性填充剩余空间）────────────────────────────
                 HStack(spacing: 4) {
                     Image(systemName: "folder")
                         .foregroundStyle(.secondary)
@@ -47,6 +47,7 @@ struct PathInputView: View {
                 }
                 .padding(.horizontal, 8)
                 .padding(.vertical, 5)
+                .frame(minWidth: 140)
                 .background(
                     RoundedRectangle(cornerRadius: 6)
                         .fill(Color(nsColor: .textBackgroundColor))
@@ -55,15 +56,15 @@ struct PathInputView: View {
                     RoundedRectangle(cornerRadius: 6)
                         .stroke(pathFocused ? Color.accentColor : Color(nsColor: .separatorColor), lineWidth: 1)
                 )
+                .layoutPriority(1)   // 优先占满剩余宽度
 
                 // Go 按钮
                 Button("跳转", action: navigateToPath)
                     .keyboardShortcut(.return)
                     .disabled(appState.selectedBucket == nil)
 
-                // 快速跳转菜单（用户自定义书签）
+                // 书签菜单（图标 + 短标题）
                 Menu {
-                    // 添加当前路径为书签
                     let currentDir = appState.currentPrefix
                     Button {
                         addBookmark(path: currentDir)
@@ -97,24 +98,34 @@ struct PathInputView: View {
                         }
                     }
                 } label: {
-                    Label("书签", systemImage: "bookmark")
+                    Image(systemName: "bookmark")
                 }
                 .menuStyle(.borderlessButton)
-                .fixedSize()
+                .frame(width: 24)
                 .disabled(appState.selectedBucket == nil)
                 .help("书签快速跳转")
 
                 Divider().frame(height: 22)
 
-                // 过滤框
+                // ── 过滤框（固定宽度）────────────────────────────────────
                 HStack(spacing: 4) {
-                    Image(systemName: "line.3.horizontal.decrease.circle")
+                    Image(systemName: "magnifyingglass")
                         .foregroundStyle(.secondary)
                         .font(.caption)
-                    TextField("正则过滤 (e.g. .*\\.log$)", text: $appState.filterPattern)
+                    TextField("正则过滤", text: $appState.filterPattern)
                         .textFieldStyle(.plain)
                         .font(.system(.body, design: .monospaced))
-                        .frame(width: 200)
+                        .frame(width: 150)
+                    if !appState.filterPattern.isEmpty {
+                        Button {
+                            appState.filterPattern = ""
+                        } label: {
+                            Image(systemName: "xmark.circle.fill")
+                                .foregroundStyle(.secondary)
+                                .font(.caption)
+                        }
+                        .buttonStyle(.borderless)
+                    }
                 }
                 .padding(.horizontal, 8)
                 .padding(.vertical, 5)
@@ -124,38 +135,46 @@ struct PathInputView: View {
                 )
                 .overlay(
                     RoundedRectangle(cornerRadius: 6)
-                        .stroke(Color(nsColor: .separatorColor), lineWidth: 1)
+                        .stroke(!appState.filterPattern.isEmpty ? Color.accentColor.opacity(0.6) : Color(nsColor: .separatorColor), lineWidth: 1)
                 )
 
-                Spacer()
+                Divider().frame(height: 22)
 
-                // 批量下载按钮
+                // ── 右侧操作按钮（图标为主，保持紧凑）────────────────────
                 let selectedCount = appState.selectedObjects.count
+
+                // 下载选中
                 Button {
                     Task { await appState.downloadSelected() }
                 } label: {
-                    Label(
-                        selectedCount > 0 ? "下载选中 (\(selectedCount))" : "下载选中",
-                        systemImage: "arrow.down.circle"
-                    )
+                    if selectedCount > 0 {
+                        Label("\(selectedCount)", systemImage: "arrow.down.circle")
+                            .font(.body)
+                    } else {
+                        Image(systemName: "arrow.down.circle")
+                    }
                 }
                 .disabled(selectedCount == 0)
                 .buttonStyle(.borderedProminent)
                 .tint(.blue)
+                .help(selectedCount > 0 ? "下载选中 (\(selectedCount) 个)" : "下载选中")
 
-                // 正则下载
+                // 正则下载（图标）
                 Button {
                     showRegexDownload = true
                 } label: {
-                    Label("正则下载", systemImage: "arrow.down.circle.dotted")
+                    Image(systemName: "arrow.down.circle.dotted")
                 }
+                .buttonStyle(.bordered)
                 .disabled(appState.selectedBucket == nil)
+                .help("正则表达式批量下载")
 
                 // 上传按钮（仅 offline + 开关打开）
                 if appState.currentEnvironment == .offline && appState.isUploadEnabled {
                     uploadButton
                 }
             }
+            .padding(.horizontal, 4)
 
             // 当前路径面包屑
             if !appState.currentPrefix.isEmpty {
@@ -312,9 +331,10 @@ struct PathInputView: View {
                 }
             }
         } label: {
-            Label("上传", systemImage: "arrow.up.circle")
+            Image(systemName: "arrow.up.circle")
                 .foregroundStyle(.orange)
         }
+        .buttonStyle(.bordered)
         .help("上传文件到当前路径（Offline 专用）")
     }
 }

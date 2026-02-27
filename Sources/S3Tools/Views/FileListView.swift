@@ -25,6 +25,12 @@ struct FileListView: View {
                     ProgressView("加载中...")
                     Spacer()
                 }
+            } else if appState.isLoadingAll && appState.filteredObjects.isEmpty {
+                VStack {
+                    Spacer()
+                    ProgressView("全量扫描中，请稍候...")
+                    Spacer()
+                }
             } else if appState.filteredObjects.isEmpty {
                 ContentUnavailableView(
                     appState.filterPattern.isEmpty ? "此目录为空" : "无匹配文件",
@@ -106,7 +112,7 @@ struct FileListView: View {
             }
 
             // 分页控件
-            if appState.selectedBucket != nil && !appState.filteredObjects.isEmpty {
+            if appState.selectedBucket != nil && (!appState.filteredObjects.isEmpty || appState.isLoadingAll) {
                 paginationBar
             }
         }
@@ -122,14 +128,18 @@ struct FileListView: View {
     private var paginationBar: some View {
         HStack {
             // 总数信息
-            Text("\(appState.filteredObjects.count) 个对象")
-                .font(.caption)
-                .foregroundStyle(.secondary)
-
-            if !appState.filterPattern.isEmpty {
-                Text("(已过滤)")
-                    .font(.caption)
-                    .foregroundStyle(.orange)
+            if appState.isLoadingAll {
+                ProgressView().scaleEffect(0.6)
+                Text("全量扫描中...").font(.caption).foregroundStyle(.orange)
+            } else if !appState.filterPattern.isEmpty {
+                // 过滤激活时显示全量结果数
+                let total = appState.allObjects.isEmpty ? appState.objects.count : appState.allObjects.count
+                Text("匹配 \(appState.filteredObjects.count) / \(total) 个对象")
+                    .font(.caption).foregroundStyle(.secondary)
+                Text("(全目录)").font(.caption).foregroundStyle(.orange)
+            } else {
+                Text("\(appState.filteredObjects.count) 个对象")
+                    .font(.caption).foregroundStyle(.secondary)
             }
 
             Spacer()

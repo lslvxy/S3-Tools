@@ -25,14 +25,15 @@ struct ToolbarView: ToolbarContent {
             }
         }
 
-        // 右侧：上传开关（Offline 专用）
+        // 右侧：上传开关（Offline 专用，icon-only 节省空间）
         ToolbarItem(placement: .primaryAction) {
             if appState.currentEnvironment == .offline {
                 Toggle(isOn: $appState.isUploadEnabled) {
-                    Label("允许上传", systemImage: "arrow.up.circle")
+                    Image(systemName: appState.isUploadEnabled ? "arrow.up.circle.fill" : "arrow.up.circle")
                 }
-                .toggleStyle(.checkbox)
-                .help("开启后可在 Offline 环境上传文件，请谨慎操作")
+                .toggleStyle(.button)
+                .tint(.orange)
+                .help(appState.isUploadEnabled ? "上传已启用（点击关闭）" : "允许上传（点击启用，谨慎操作）")
             }
         }
 
