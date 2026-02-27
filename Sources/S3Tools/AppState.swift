@@ -340,9 +340,9 @@ enum ConnectionStatus: Equatable {
 
     var displayText: String {
         switch self {
-        case .disconnected: return "未连接"
-        case .connecting: return "连接中..."
-        case .connected: return "已连接"
+        case .disconnected: return "未连接   "
+        case .connecting: return "连接中...   "
+        case .connected: return "已连接   "
         case .failed(let msg): return "连接失败: \(msg)"
         }
     }

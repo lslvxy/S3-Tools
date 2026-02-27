@@ -11,7 +11,7 @@ struct PathInputView: View {
 
     var body: some View {
         VStack(spacing: 6) {
-            HStack(spacing: 6) {
+            HStack(spacing: 4) {
                 // ── 路径输入（弹性填充剩余空间）────────────────────────────
                 HStack(spacing: 4) {
                     Image(systemName: "folder")
@@ -47,7 +47,7 @@ struct PathInputView: View {
                 }
                 .padding(.horizontal, 8)
                 .padding(.vertical, 5)
-                .frame(minWidth: 140)
+                .frame(minWidth: 100, maxWidth: .infinity)
                 .background(
                     RoundedRectangle(cornerRadius: 6)
                         .fill(Color(nsColor: .textBackgroundColor))
@@ -59,9 +59,12 @@ struct PathInputView: View {
                 .layoutPriority(1)   // 优先占满剩余宽度
 
                 // Go 按钮
-                Button("跳转", action: navigateToPath)
-                    .keyboardShortcut(.return)
-                    .disabled(appState.selectedBucket == nil)
+                Button(action: navigateToPath) {
+                    Image(systemName: "arrow.right.circle")
+                }
+                .keyboardShortcut(.return)
+                .disabled(appState.selectedBucket == nil)
+                .help("跳转")
 
                 // 书签菜单（图标 + 短标题）
                 Menu {
@@ -101,9 +104,9 @@ struct PathInputView: View {
                     Image(systemName: "bookmark")
                 }
                 .menuStyle(.borderlessButton)
-                .frame(width: 24)
+                .fixedSize()
                 .disabled(appState.selectedBucket == nil)
-                .help("书签快速跳转")
+                .help("书签")
 
                 Divider().frame(height: 22)
 
@@ -112,10 +115,10 @@ struct PathInputView: View {
                     Image(systemName: "magnifyingglass")
                         .foregroundStyle(.secondary)
                         .font(.caption)
-                    TextField("正则过滤", text: $appState.filterPattern)
+                    TextField("过滤", text: $appState.filterPattern)
                         .textFieldStyle(.plain)
                         .font(.system(.body, design: .monospaced))
-                        .frame(width: 150)
+                        .frame(width: 90)
                     if !appState.filterPattern.isEmpty {
                         Button {
                             appState.filterPattern = ""
@@ -149,7 +152,6 @@ struct PathInputView: View {
                 } label: {
                     if selectedCount > 0 {
                         Label("\(selectedCount)", systemImage: "arrow.down.circle")
-                            .font(.body)
                     } else {
                         Image(systemName: "arrow.down.circle")
                     }
@@ -158,8 +160,9 @@ struct PathInputView: View {
                 .buttonStyle(.borderedProminent)
                 .tint(.blue)
                 .help(selectedCount > 0 ? "下载选中 (\(selectedCount) 个)" : "下载选中")
+                .fixedSize()
 
-                // 正则下载（图标）
+                // 正则下载
                 Button {
                     showRegexDownload = true
                 } label: {
@@ -168,6 +171,7 @@ struct PathInputView: View {
                 .buttonStyle(.bordered)
                 .disabled(appState.selectedBucket == nil)
                 .help("正则表达式批量下载")
+                .fixedSize()
 
                 // 上传按钮（仅 offline + 开关打开）
                 if appState.currentEnvironment == .offline && appState.isUploadEnabled {
@@ -331,7 +335,7 @@ struct PathInputView: View {
                 }
             }
         } label: {
-            Image(systemName: "arrow.up.circle")
+            Label("上传", systemImage: "arrow.up.circle")
                 .foregroundStyle(.orange)
         }
         .buttonStyle(.bordered)

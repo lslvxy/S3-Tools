@@ -1,8 +1,17 @@
 import SwiftUI
+import AppKit
 
 @main
 struct S3ToolsApp: App {
     @StateObject private var appState = AppState()
+
+    init() {
+        // 从 bundle 中加载 .icns 并设置 Dock 图标
+        if let iconURL = Bundle.main.url(forResource: "AppIcon", withExtension: "icns"),
+           let icon = NSImage(contentsOf: iconURL) {
+            NSApplication.shared.applicationIconImage = icon
+        }
+    }
 
     var body: some Scene {
         WindowGroup {

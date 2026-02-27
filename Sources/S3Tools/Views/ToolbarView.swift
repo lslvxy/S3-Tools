@@ -25,11 +25,14 @@ struct ToolbarView: ToolbarContent {
             }
         }
 
-        // 右侧：上传开关（Offline 专用，icon-only 节省空间）
+        // 右侧：上传开关（Offline 专用）
         ToolbarItem(placement: .primaryAction) {
             if appState.currentEnvironment == .offline {
                 Toggle(isOn: $appState.isUploadEnabled) {
-                    Image(systemName: appState.isUploadEnabled ? "arrow.up.circle.fill" : "arrow.up.circle")
+                    Label(
+                        appState.isUploadEnabled ? "上传已开" : "允许上传",
+                        systemImage: appState.isUploadEnabled ? "arrow.up.circle.fill" : "arrow.up.circle"
+                    )
                 }
                 .toggleStyle(.button)
                 .tint(.orange)
@@ -48,7 +51,7 @@ struct ToolbarView: ToolbarContent {
                     }
                 }
             } label: {
-                Image(systemName: "arrow.clockwise")
+                Label("刷新", systemImage: "arrow.clockwise")
             }
             .disabled(appState.isLoading)
             .help("强制刷新，忽略缓存 (⌘R)")
@@ -57,7 +60,7 @@ struct ToolbarView: ToolbarContent {
         // 右侧：设置
         ToolbarItem(placement: .primaryAction) {
             SettingsLink {
-                Image(systemName: "gear")
+                Label("设置", systemImage: "gear")
             }
             .help("设置")
         }

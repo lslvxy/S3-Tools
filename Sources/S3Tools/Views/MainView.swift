@@ -13,7 +13,7 @@ struct MainView: View {
                 // 路径 + 过滤栏
                 PathInputView()
                     .padding(8)
-                    .background(Color(nsColor: .controlBackgroundColor))
+                    .background(Color(nsColor: .windowBackgroundColor))
                     .overlay(alignment: .bottom) { Divider() }
 
                 // 文件列表

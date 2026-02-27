@@ -21,7 +21,10 @@ let package = Package(
             dependencies: [
                 .product(name: "AWSS3", package: "aws-sdk-swift")
             ],
-            path: "Sources/S3Tools"
+            path: "Sources/S3Tools",
+            resources: [
+                .copy("Resources/AppIcon.icns")
+            ]
         )
     ]
 )
