@@ -46,6 +46,15 @@ final class AppSettings: ObservableObject {
         didSet { defaults.set(lastEnvironment.rawValue, forKey: "lastEnvironment") }
     }
 
+    // MARK: - Bookmarks
+    @Published var bookmarks: [BookmarkEntry] {
+        didSet {
+            if let data = try? JSONEncoder().encode(bookmarks) {
+                defaults.set(data, forKey: "bookmarks")
+            }
+        }
+    }
+
     init() {
         pageSize = defaults.integer(forKey: "pageSize").nonZero ?? 200
         maxConcurrentDownloads = defaults.integer(forKey: "maxConcurrentDownloads").nonZero ?? 4
@@ -77,6 +86,14 @@ final class AppSettings: ObservableObject {
             }
         }
         environmentConfigs = configs
+
+        // 加载书签（首次启动时以内置列表为默认值）
+        if let data = defaults.data(forKey: "bookmarks"),
+           let saved = try? JSONDecoder().decode([BookmarkEntry].self, from: data) {
+            bookmarks = saved
+        } else {
+            bookmarks = BookmarkEntry.defaults
+        }
     }
 }
 

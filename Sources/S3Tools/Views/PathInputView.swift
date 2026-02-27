@@ -6,6 +6,7 @@ struct PathInputView: View {
     @State private var pathInput: String = ""
     @State private var regexInput: String = ""
     @State private var showRegexDownload = false
+    @State private var showBookmarkManager = false
     @FocusState private var pathFocused: Bool
 
     var body: some View {
@@ -60,27 +61,48 @@ struct PathInputView: View {
                     .keyboardShortcut(.return)
                     .disabled(appState.selectedBucket == nil)
 
-                // 快速跳转菜单
+                // 快速跳转菜单（用户自定义书签）
                 Menu {
-                    ForEach(QuickJumpEntry.all) { entry in
-                        Button {
-                            jumpTo(entry: entry)
-                        } label: {
-                            VStack(alignment: .leading) {
-                                Text(entry.id)
-                                Text(entry.directoryPrefix)
-                                    .font(.caption)
-                                    .foregroundStyle(.secondary)
+                    // 添加当前路径为书签
+                    let currentDir = appState.currentPrefix
+                    Button {
+                        addBookmark(path: currentDir)
+                    } label: {
+                        Label(
+                            currentDir.isEmpty ? "添加书签（请先进入目录）" : "添加书签: \(currentDir)",
+                            systemImage: "bookmark.badge.plus"
+                        )
+                    }
+                    .disabled(currentDir.isEmpty || appState.selectedBucket == nil)
+
+                    Button {
+                        showBookmarkManager = true
+                    } label: {
+                        Label("管理书签...", systemImage: "list.bullet")
+                    }
+
+                    if !appState.appSettings.bookmarks.isEmpty {
+                        Divider()
+                        ForEach(appState.appSettings.bookmarks) { entry in
+                            Button {
+                                jumpTo(path: entry.directoryPrefix)
+                            } label: {
+                                VStack(alignment: .leading) {
+                                    Text(entry.name)
+                                    Text(entry.directoryPrefix)
+                                        .font(.caption)
+                                        .foregroundStyle(.secondary)
+                                }
                             }
                         }
                     }
                 } label: {
-                    Label("快速跳转", systemImage: "bookmark")
+                    Label("书签", systemImage: "bookmark")
                 }
                 .menuStyle(.borderlessButton)
                 .fixedSize()
                 .disabled(appState.selectedBucket == nil)
-                .help("从预定义路径快速跳转")
+                .help("书签快速跳转")
 
                 Divider().frame(height: 22)
 
@@ -143,6 +165,9 @@ struct PathInputView: View {
         .sheet(isPresented: $showRegexDownload) {
             RegexDownloadSheet()
         }
+        .sheet(isPresented: $showBookmarkManager) {
+            BookmarkManagerSheet()
+        }
         .onAppear {
             pathInput = appState.currentPrefix
         }
@@ -162,13 +187,20 @@ struct PathInputView: View {
         Task { await appState.loadObjects(bucket: bucket, prefix: pathInput) }
     }
 
-    private func jumpTo(entry: QuickJumpEntry) {
+    private func jumpTo(path: String) {
         guard let bucket = appState.selectedBucket else { return }
-        let prefix = entry.directoryPrefix
-        pathInput = prefix
-        appState.currentPrefix = prefix
+        pathInput = path
+        appState.currentPrefix = path
         completion.suggestions = []
-        Task { await appState.loadObjects(bucket: bucket, prefix: prefix) }
+        Task { await appState.loadObjects(bucket: bucket, prefix: path) }
+    }
+
+    private func addBookmark(path: String) {
+        guard !path.isEmpty else { return }
+        // 不重复添加
+        guard !appState.appSettings.bookmarks.contains(where: { $0.path == path }) else { return }
+        let name = path.split(separator: "/").last.map(String.init) ?? path
+        appState.appSettings.bookmarks.append(BookmarkEntry(name: name, path: path))
     }
 
     @ViewBuilder
@@ -284,6 +316,126 @@ struct PathInputView: View {
                 .foregroundStyle(.orange)
         }
         .help("上传文件到当前路径（Offline 专用）")
+    }
+}
+
+// MARK: - 书签管理弹窗
+
+struct BookmarkManagerSheet: View {
+    @EnvironmentObject var appState: AppState
+    @Environment(\.dismiss) var dismiss
+    @State private var editingName: [UUID: String] = [:]
+    @State private var showAddSheet = false
+    @State private var newName = ""
+    @State private var newPath = ""
+
+    var body: some View {
+        VStack(spacing: 0) {
+            // 标题栏
+            HStack {
+                Text("管理书签")
+                    .font(.headline)
+                Spacer()
+                Button("完成") { dismiss() }
+                    .keyboardShortcut(.escape)
+            }
+            .padding()
+            .background(Color(nsColor: .controlBackgroundColor))
+
+            Divider()
+
+            if appState.appSettings.bookmarks.isEmpty {
+                ContentUnavailableView(
+                    "暂无书签",
+                    systemImage: "bookmark.slash",
+                    description: Text("点击下方按钮添加常用路径")
+                )
+            } else {
+                List {
+                    ForEach($appState.appSettings.bookmarks) { $bookmark in
+                        HStack(spacing: 8) {
+                            VStack(alignment: .leading, spacing: 2) {
+                                TextField("名称", text: $bookmark.name)
+                                    .textFieldStyle(.plain)
+                                    .font(.body.weight(.medium))
+                                TextField("路径", text: $bookmark.path)
+                                    .textFieldStyle(.plain)
+                                    .font(.system(.caption, design: .monospaced))
+                                    .foregroundStyle(.secondary)
+                            }
+                            Spacer()
+                            Button {
+                                appState.appSettings.bookmarks.removeAll { $0.id == bookmark.id }
+                            } label: {
+                                Image(systemName: "trash")
+                                    .foregroundStyle(.red)
+                            }
+                            .buttonStyle(.borderless)
+                        }
+                        .padding(.vertical, 2)
+                    }
+                    .onMove { from, to in
+                        appState.appSettings.bookmarks.move(fromOffsets: from, toOffset: to)
+                    }
+                }
+            }
+
+            Divider()
+
+            // 底部工具栏
+            HStack {
+                Button {
+                    showAddSheet = true
+                } label: {
+                    Label("添加书签", systemImage: "plus")
+                }
+                .buttonStyle(.borderless)
+
+                Spacer()
+
+                Button("恢复默认") {
+                    appState.appSettings.bookmarks = BookmarkEntry.defaults
+                }
+                .buttonStyle(.borderless)
+                .foregroundStyle(.orange)
+            }
+            .padding(.horizontal)
+            .padding(.vertical, 8)
+            .background(Color(nsColor: .controlBackgroundColor))
+        }
+        .frame(width: 500, height: 460)
+        .sheet(isPresented: $showAddSheet) {
+            VStack(spacing: 16) {
+                Text("添加书签")
+                    .font(.headline)
+                LabeledContent("名称") {
+                    TextField("例: Markoff Done", text: $newName)
+                        .textFieldStyle(.roundedBorder)
+                }
+                LabeledContent("路径") {
+                    TextField("例: FromAntFinancial/SOV/Markoff/done/", text: $newPath)
+                        .textFieldStyle(.roundedBorder)
+                        .font(.system(.body, design: .monospaced))
+                }
+                HStack {
+                    Button("取消") { showAddSheet = false }
+                        .keyboardShortcut(.escape)
+                    Spacer()
+                    Button("添加") {
+                        let name = newName.isEmpty ? (newPath.split(separator: "/").last.map(String.init) ?? newPath) : newName
+                        appState.appSettings.bookmarks.append(BookmarkEntry(name: name, path: newPath))
+                        newName = ""
+                        newPath = ""
+                        showAddSheet = false
+                    }
+                    .keyboardShortcut(.return)
+                    .buttonStyle(.borderedProminent)
+                    .disabled(newPath.isEmpty)
+                }
+            }
+            .padding(24)
+            .frame(width: 400)
+        }
     }
 }
 

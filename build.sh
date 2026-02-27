@@ -38,17 +38,18 @@ check_deps() {
         error "未找到 xcodebuild。请安装 Xcode Command Line Tools: xcode-select --install"
     fi
 
+    # 用 || true 防止 head -1 截断管道时 pipefail 误报非零退出码
     local xcode_version
-    xcode_version=$(xcodebuild -version 2>/dev/null | head -1)
-    info "  $xcode_version"
+    xcode_version=$(xcodebuild -version 2>/dev/null | head -1 || true)
+    info "  ${xcode_version:-xcodebuild (version unknown)}"
 
     if ! command -v swift &>/dev/null; then
         error "未找到 swift 命令行工具"
     fi
 
     local swift_version
-    swift_version=$(swift --version 2>/dev/null | head -1)
-    info "  $swift_version"
+    swift_version=$(swift --version 2>/dev/null | head -1 || true)
+    info "  ${swift_version:-swift (version unknown)}"
 }
 
 # ─── 清理 ─────────────────────────────────────────────────────────────────────

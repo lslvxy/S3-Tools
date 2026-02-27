@@ -10,6 +10,8 @@ final class S3Service {
     private let credResolver: StaticAWSCredentialIdentityResolver
     // 缓存各 region 的 S3Client，避免跨区域请求重复初始化
     private var regionalClients: [String: S3Client] = [:]
+    // 缓存已检测到的 bucket 所属 region，listObjects/download 共享
+    private var bucketRegionCache: [String: String] = [:]
 
     init(credentials: AWSCredentials, config: EnvironmentConfig, environment: S3Environment) async throws {
         self.environment = environment
@@ -66,6 +68,14 @@ final class S3Service {
         return "us-east-1"
     }
 
+    /// 返回 bucket 对应的正确 S3Client（优先读缓存，否则使用默认 client）
+    private func clientForBucket(_ bucket: String) async -> S3Client {
+        guard let cachedRegion = bucketRegionCache[bucket] else { return client }
+        let configuredRegion = config.region.isEmpty ? "us-east-1" : config.region
+        guard cachedRegion != configuredRegion else { return client }
+        return (try? await regionalClient(for: cachedRegion)) ?? client
+    }
+
     // MARK: - List Buckets
 
     func listBuckets() async throws -> [String] {
@@ -95,6 +105,8 @@ final class S3Service {
             let configuredRegion = config.region.isEmpty ? "us-east-1" : config.region
             guard bucketRegion != configuredRegion else { throw error }
 
+            // 缓存检测到的 region，供后续 download 等操作复用
+            bucketRegionCache[bucket] = bucketRegion
             let regional = try await regionalClient(for: bucketRegion)
             return try await performListObjects(
                 using: regional, bucket: bucket,
@@ -178,8 +190,23 @@ final class S3Service {
         destinationURL: URL,
         progressHandler: @escaping (Double) -> Void
     ) async throws {
+        // 使用缓存的 regional client，避免 region 不符导致 UnknownAWSHTTPServiceError
+        let s3 = await clientForBucket(bucket)
         let input = GetObjectInput(bucket: bucket, key: key)
-        let output = try await client.getObject(input: input)
+        let output: GetObjectOutput
+        do {
+            output = try await s3.getObject(input: input)
+        } catch {
+            // 若缓存 region 未命中，尝试检测真实 region 并重试
+            guard config.endpoint.isEmpty,
+                  let bucketRegion = try? await getBucketRegion(bucket: bucket)
+            else { throw error }
+            let configuredRegion = config.region.isEmpty ? "us-east-1" : config.region
+            guard bucketRegion != configuredRegion else { throw error }
+            bucketRegionCache[bucket] = bucketRegion
+            let regional = try await regionalClient(for: bucketRegion)
+            output = try await regional.getObject(input: input)
+        }
 
         guard let body = output.body else {
             throw AppError.objectNotFound("对象 key=\(key) 无内容")
