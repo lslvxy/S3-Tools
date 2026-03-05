@@ -24,7 +24,7 @@ struct QuickJumpEntry: Identifiable, Hashable {
         QuickJumpEntry(id: "SOV_AML_ACCOUNT_BALANCE_CUSTOMER",             path: "vodapay/filesToBidvest/kyc/done/Account_balance_customer_sov_",                                         altPath: ""),
         QuickJumpEntry(id: "SOV_AML_ACCOUNT_CUSTOMER",                     path: "vodapay/filesToBidvest/kyc/done/Account_customer_sov_",                                                 altPath: ""),
         QuickJumpEntry(id: "SOV_AML_NETT_MOVEMENT",                        path: "vodapay/filesToBidvest/kyc/done/nett_movement_report_",                                                 altPath: ""),
-        QuickJumpEntry(id: "VIRTUALCARD_DUMP_FILE",                        path: "ToAntFinancial/virtualcard/VODAPAY_TRANSACTION_DUMP_334_",                                              altPath: ""),
+        QuickJumpEntry(id: "VIRTUALCARD_DUMP_FILE",                        path: "ToAntFinancial/virtualcard/dump/done/VODAPAY_TRANSACTION_DUMP_334_",                                              altPath: ""),
         QuickJumpEntry(id: "VAS_RECON",                                    path: "FromAntFinancial/VAS/Alipayplus_vas_recon_",                                                            altPath: ""),
         QuickJumpEntry(id: "EFT_IN_RETRY",                                 path: "ToAntFinancial/SOV/Retry/done/alipayplus_eft_retail_deposit_retry_request_",                            altPath: ""),
         QuickJumpEntry(id: "EFT_IN_ROLLBACK",                              path: "Financial/SOV/Error/EFT_In_Rollback_",                                                                  altPath: ""),

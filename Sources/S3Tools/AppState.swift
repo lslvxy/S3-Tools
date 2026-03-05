@@ -23,11 +23,11 @@ final class AppState: ObservableObject {
     @Published var isLoading: Bool = false
 
     // MARK: - Filter
-    @Published var filterPattern: String = ""
-    @Published var filteredObjects: [S3Object] = []
-    /// 过滤激活时全量加载的所有对象（跨分页）
-    @Published var allObjects: [S3Object] = []
-    @Published var isLoadingAll: Bool = false
+    @Published var filterPattern: String = "" {
+        didSet {
+            scheduleFilterLoad()
+        }
+    }
 
     // MARK: - Download
     @Published var downloadTasks: [DownloadTask] = []
@@ -61,33 +61,19 @@ final class AppState: ObservableObject {
     private var objectCache: [String: CachedPage] = [:]
     private let cacheTTL: TimeInterval = 300  // 5 分钟
 
-    /// 全量对象缓存（用于跨分页过滤），key = "bucket\0prefix\0all"
-    private struct AllObjectsCache {
-        let objects: [S3Object]
-        let timestamp: Date
-    }
-    private var allObjectsCache: [String: AllObjectsCache] = [:]
-
     private func cacheKey(bucket: String, prefix: String) -> String { "\(bucket)\0\(prefix)" }
-    private func allCacheKey(bucket: String, prefix: String) -> String { "\(bucket)\0\(prefix)\0all" }
 
     private var filterCancellable: AnyCancellable?
+    private var filterLoadTask: Task<Void, Never>?
+    private var suppressNextFilterLoad = false
+    private var settingsCancellable: AnyCancellable?
 
     init() {
         self.downloadManager = DownloadManager()
         self.isUploadEnabled = false
-
-        // 监听 filter 变化：空则直接过滤当前页；非空则全量加载后过滤
-        filterCancellable = $filterPattern
-            .debounce(for: .milliseconds(300), scheduler: RunLoop.main)
-            .sink { [weak self] pattern in
-                guard let self else { return }
-                if pattern.isEmpty {
-                    self.filteredObjects = self.objects
-                } else {
-                    Task { await self.loadAllAndFilter(pattern: pattern) }
-                }
-            }
+        // 将 AppSettings 内部变化（如 bookmarks）转发到 AppState.objectWillChange，让视图实时更新
+        settingsCancellable = appSettings.objectWillChange
+            .sink { [weak self] _ in self?.objectWillChange.send() }
     }
 
     // MARK: - Environment Switching
@@ -102,13 +88,12 @@ final class AppState: ObservableObject {
         selectedBucket = nil
         currentPrefix = ""
         objects = []
-        allObjects = []
         buckets = []
         currentPage = 1
         continuationToken = nil
         filterPattern = ""
         objectCache.removeAll()
-        allObjectsCache.removeAll()
+        filterPattern = "" // 切换环境时重置过滤
 
         do {
             let service = try await S3Service(profile: profile)
@@ -120,6 +105,12 @@ final class AppState: ObservableObject {
 
             appLogger.log(action: "切换环境", detail: "切换到 [\(profile.name)]", level: .info)
             await loadBuckets()
+
+            // 如果配置了默认 Bucket 则自动选中并加载
+            if !profile.defaultBucket.isEmpty, buckets.contains(profile.defaultBucket) {
+                selectedBucket = profile.defaultBucket
+                await loadObjects(bucket: profile.defaultBucket, prefix: "")
+            }
         } catch {
             self.connectionStatus = .failed(error.localizedDescription)
             self.s3Service = nil
@@ -157,7 +148,6 @@ final class AppState: ObservableObject {
                 continuationToken = cached.nextToken
                 hasMorePages = cached.nextToken != nil
                 currentPage = 1
-                applyFilter(pattern: filterPattern)
                 appLogger.log(action: "列出对象(缓存)", detail: "s3://\(bucket)/\(prefix) 共 \(cached.objects.count) 个", level: .info)
                 return
             }
@@ -168,7 +158,6 @@ final class AppState: ObservableObject {
 
         if reset {
             objects = []
-            allObjects = []  // 进入新目录时清空全量缓存
             continuationToken = nil
             currentPage = 1
         }
@@ -192,7 +181,6 @@ final class AppState: ObservableObject {
             hasMorePages = result.nextToken != nil
             if !reset { currentPage += 1 }
 
-            applyFilter(pattern: filterPattern)
             let label = forceRefresh ? "列出对象(刷新)" : "列出对象"
             appLogger.log(action: label, detail: "s3://\(bucket)/\(prefix) 共 \(result.objects.count) 个", level: .info)
         } catch {
@@ -209,7 +197,7 @@ final class AppState: ObservableObject {
     // MARK: - Download
 
     func downloadSelected() async {
-        let toDownload = filteredObjects.filter { selectedObjects.contains($0.key) }
+        let toDownload = objects.filter { selectedObjects.contains($0.key) }
         guard !toDownload.isEmpty else { return }
         await enqueueDownloads(objects: toDownload)
     }
@@ -243,78 +231,40 @@ final class AppState: ObservableObject {
                 if let idx = self?.downloadTasks.firstIndex(where: { $0.id == updatedTask.id }) {
                     self?.downloadTasks[idx] = updatedTask
                 }
-                self?.appLogger.log(
-                    action: updatedTask.status == .completed ? "下载完成" : "下载失败",
-                    detail: updatedTask.key,
-                    level: updatedTask.status == .completed ? .info : .error
-                )
+                switch updatedTask.status {
+                case .completed:
+                    self?.appLogger.log(action: "下载完成", detail: updatedTask.key, level: .info)
+                case .failed(let reason):
+                    self?.appLogger.log(action: "下载失败", detail: "\(updatedTask.key): \(reason)", level: .error)
+                default:
+                    break
+                }
             }
         }
     }
 
     // MARK: - Filter
 
-    /// 全量加载当前目录所有分页，然后在全量结果上应用过滤（最多 50 页 × 1000 = 50,000 条）
-    func loadAllAndFilter(pattern: String) async {
-        guard let service = s3Service, let bucket = selectedBucket, !pattern.isEmpty else { return }
-        let prefix = currentPrefix
-        let key = allCacheKey(bucket: bucket, prefix: prefix)
+    /// 导航时调用：静默重置过滤词，不触发网络请求
+    func clearFilterSilently() {
+        filterLoadTask?.cancel()
+        filterLoadTask = nil
+        suppressNextFilterLoad = true
+        filterPattern = ""
+    }
 
-        // 命中全量缓存则直接过滤
-        if let cached = allObjectsCache[key],
-           Date().timeIntervalSince(cached.timestamp) < cacheTTL {
-            allObjects = cached.objects
-            applyFilterToSource(cached.objects, pattern: pattern)
-            appLogger.log(action: "过滤(缓存)", detail: "共 \(cached.objects.count) 条，pattern=\(pattern)", level: .info)
+    private func scheduleFilterLoad() {
+        guard !suppressNextFilterLoad else {
+            suppressNextFilterLoad = false
             return
         }
-
-        isLoadingAll = true
-        defer { isLoadingAll = false }
-
-        var accumulated: [S3Object] = []
-        var token: String? = nil
-        var pageCount = 0
-        let maxPages = 50
-
-        do {
-            repeat {
-                let result = try await service.listObjects(
-                    bucket: bucket, prefix: prefix,
-                    continuationToken: token, pageSize: 1000
-                )
-                accumulated.append(contentsOf: result.objects)
-                token = result.nextToken
-                pageCount += 1
-            } while token != nil && pageCount < maxPages
-
-            allObjects = accumulated
-            allObjectsCache[key] = AllObjectsCache(objects: accumulated, timestamp: Date())
-            applyFilterToSource(accumulated, pattern: pattern)
-            appLogger.log(action: "全量加载", detail: "s3://\(bucket)/\(prefix) 共 \(accumulated.count) 条", level: .info)
-        } catch {
-            appLogger.log(action: "全量加载失败", detail: error.localizedDescription, level: .error)
-        }
-    }
-
-    func applyFilter(pattern: String) {
-        if pattern.isEmpty {
-            filteredObjects = objects
-        } else if !allObjects.isEmpty {
-            applyFilterToSource(allObjects, pattern: pattern)
-        } else {
-            applyFilterToSource(objects, pattern: pattern)
-        }
-    }
-
-    private func applyFilterToSource(_ source: [S3Object], pattern: String) {
-        if let regex = try? NSRegularExpression(pattern: pattern, options: .caseInsensitive) {
-            filteredObjects = source.filter { obj in
-                let name = obj.displayName
-                return regex.firstMatch(in: name, range: NSRange(name.startIndex..., in: name)) != nil
-            }
-        } else {
-            filteredObjects = source.filter { $0.displayName.localizedCaseInsensitiveContains(pattern) }
+        filterLoadTask?.cancel()
+        filterLoadTask = Task { [weak self] in
+            try? await Task.sleep(for: .milliseconds(400))
+            guard let self, !Task.isCancelled else { return }
+            guard let bucket = selectedBucket else { return }
+            let prefix = currentPrefix + filterPattern
+            await loadObjects(bucket: bucket, prefix: prefix)
         }
     }
 

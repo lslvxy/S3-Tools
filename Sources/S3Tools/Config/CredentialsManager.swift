@@ -55,7 +55,8 @@ final class CredentialsManager {
                     region: region,
                     endpoint: endpoint,
                     usePathStyle: pathStyle,
-                    isProduction: isProduction
+                    isProduction: isProduction,
+                    defaultBucket: section["default_bucket"] ?? ""
                 )
             }
             .sorted { $0.name < $1.name }

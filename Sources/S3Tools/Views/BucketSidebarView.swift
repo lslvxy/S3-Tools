@@ -81,13 +81,22 @@ struct BucketSidebarView: View {
                         }
                     }
                 )) { bucket in
-                    Label(bucket, systemImage: "cylinder")
-                        .contextMenu {
-                            Button("复制名称") {
-                                NSPasteboard.general.clearContents()
-                                NSPasteboard.general.setString(bucket, forType: .string)
-                            }
+                    let isActive = bucket == appState.selectedBucket
+                    HStack(spacing: 4) {
+                        Label(bucket, systemImage: "cylinder")
+                        if isActive {
+                            Spacer()
+                            Image(systemName: "star.fill")
+                                .font(.caption2)
+                                .foregroundStyle(.yellow)
                         }
+                    }
+                    .contextMenu {
+                        Button("复制名称") {
+                            NSPasteboard.general.clearContents()
+                            NSPasteboard.general.setString(bucket, forType: .string)
+                        }
+                    }
                 }
                 .listStyle(.sidebar)
             }

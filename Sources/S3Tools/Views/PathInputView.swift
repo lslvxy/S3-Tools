@@ -7,6 +7,10 @@ struct PathInputView: View {
     @State private var regexInput: String = ""
     @State private var showRegexDownload = false
     @State private var showBookmarkManager = false
+    @State private var showAddBookmark = false
+    @State private var addBookmarkName = ""
+    @State private var addBookmarkPath = ""
+    @State private var suppressPathSync = false
     @FocusState private var pathFocused: Bool
 
     var body: some View {
@@ -70,7 +74,9 @@ struct PathInputView: View {
                 Menu {
                     let currentDir = appState.currentPrefix
                     Button {
-                        addBookmark(path: currentDir)
+                        addBookmarkName = currentDir.split(separator: "/").last.map(String.init) ?? currentDir
+                        addBookmarkPath = currentDir
+                        showAddBookmark = true
                     } label: {
                         Label(
                             currentDir.isEmpty ? "添加书签（请先进入目录）" : "添加书签: \(currentDir)",
@@ -89,7 +95,7 @@ struct PathInputView: View {
                         Divider()
                         ForEach(appState.appSettings.bookmarks) { entry in
                             Button {
-                                jumpTo(path: entry.directoryPrefix)
+                                jumpTo(path: entry.path)
                             } label: {
                                 VStack(alignment: .leading) {
                                     Text(entry.name)
@@ -115,7 +121,7 @@ struct PathInputView: View {
                     Image(systemName: "magnifyingglass")
                         .foregroundStyle(.secondary)
                         .font(.caption)
-                    TextField("过滤", text: $appState.filterPattern)
+                    TextField("前缀过滤", text: $appState.filterPattern)
                         .textFieldStyle(.plain)
                         .font(.system(.body, design: .monospaced))
                         .frame(width: 90)
@@ -191,12 +197,27 @@ struct PathInputView: View {
         .sheet(isPresented: $showBookmarkManager) {
             BookmarkManagerSheet()
         }
+        .sheet(isPresented: $showAddBookmark) {
+            AddBookmarkSheet(name: $addBookmarkName, path: $addBookmarkPath) {
+                guard !addBookmarkPath.isEmpty else { return }
+                guard !appState.appSettings.bookmarks.contains(where: { $0.path == addBookmarkPath }) else { return }
+                appState.appSettings.bookmarks.insert(
+                    BookmarkEntry(name: addBookmarkName.isEmpty ? addBookmarkPath : addBookmarkName,
+                                  path: addBookmarkPath),
+                    at: 0
+                )
+            }
+        }
         .onAppear {
             pathInput = appState.currentPrefix
         }
         // 当外部（FileListView 导航、侧边栏选 bucket）改变前缀时，同步到输入框
         .onChange(of: appState.currentPrefix) { _, newVal in
-            pathInput = newVal
+            if suppressPathSync {
+                suppressPathSync = false
+            } else {
+                pathInput = newVal
+            }
         }
         .onChange(of: appState.selectedBucket) { _, _ in
             pathInput = appState.currentPrefix
@@ -205,6 +226,7 @@ struct PathInputView: View {
 
     private func navigateToPath() {
         guard let bucket = appState.selectedBucket else { return }
+        appState.clearFilterSilently()
         appState.currentPrefix = pathInput
         completion.suggestions = []
         Task { await appState.loadObjects(bucket: bucket, prefix: pathInput) }
@@ -212,18 +234,38 @@ struct PathInputView: View {
 
     private func jumpTo(path: String) {
         guard let bucket = appState.selectedBucket else { return }
-        pathInput = path
-        appState.currentPrefix = path
         completion.suggestions = []
-        Task { await appState.loadObjects(bucket: bucket, prefix: path) }
+        if path.hasSuffix("/") {
+            // 目录跳转：清除过滤，直接导航
+            appState.clearFilterSilently()
+            pathInput = path
+            appState.currentPrefix = path
+            Task { await appState.loadObjects(bucket: bucket, prefix: path) }
+        } else {
+            // 文件前缀跳转：导航到目录，过滤框填文件名前缀，S3 服务端前缀匹配
+            let dirPrefix: String
+            let filePrefix: String
+            if let slashIdx = path.lastIndex(of: "/") {
+                dirPrefix = String(path[path.startIndex...slashIdx])
+                filePrefix = String(path[path.index(after: slashIdx)...])
+            } else {
+                dirPrefix = ""
+                filePrefix = path
+            }
+            appState.clearFilterSilently()
+            suppressPathSync = true
+            pathInput = path
+            appState.currentPrefix = dirPrefix
+            // 设置 filterPattern 会自动触发 scheduleFilterLoad，请求 dirPrefix+filePrefix
+            appState.filterPattern = filePrefix
+        }
     }
 
     private func addBookmark(path: String) {
         guard !path.isEmpty else { return }
-        // 不重复添加
         guard !appState.appSettings.bookmarks.contains(where: { $0.path == path }) else { return }
         let name = path.split(separator: "/").last.map(String.init) ?? path
-        appState.appSettings.bookmarks.append(BookmarkEntry(name: name, path: path))
+        appState.appSettings.bookmarks.insert(BookmarkEntry(name: name, path: path), at: 0)
     }
 
     @ViewBuilder
@@ -274,6 +316,7 @@ struct PathInputView: View {
                 .map(String.init)
 
             Button(appState.selectedBucket ?? "") {
+                appState.clearFilterSilently()
                 appState.currentPrefix = ""
                 pathInput = ""
                 Task {
@@ -290,6 +333,7 @@ struct PathInputView: View {
                     Text("/").font(.caption).foregroundStyle(.secondary)
                     let prefix = parts[0...idx].joined(separator: "/") + "/"
                     Button(part) {
+                        appState.clearFilterSilently()
                         appState.currentPrefix = prefix
                         pathInput = prefix
                         Task {
@@ -340,6 +384,43 @@ struct PathInputView: View {
         }
         .buttonStyle(.bordered)
         .help("上传文件到当前路径（Offline 专用）")
+    }
+}
+
+// MARK: - 添加书签弹窗
+
+struct AddBookmarkSheet: View {
+    @Binding var name: String
+    @Binding var path: String
+    let onSave: () -> Void
+    @Environment(\.dismiss) var dismiss
+
+    var body: some View {
+        VStack(spacing: 16) {
+            Text("添加书签")
+                .font(.headline)
+            Form {
+                TextField("名称", text: $name)
+                TextField("路径", text: $path)
+                    .font(.system(.body, design: .monospaced))
+            }
+            .formStyle(.grouped)
+            HStack {
+                Button("取消") { dismiss() }
+                    .keyboardShortcut(.escape)
+                Spacer()
+                Button("保存") {
+                    onSave()
+                    dismiss()
+                }
+                .keyboardShortcut(.return)
+                .buttonStyle(.borderedProminent)
+                .disabled(path.isEmpty)
+            }
+            .padding(.horizontal, 4)
+        }
+        .padding()
+        .frame(width: 380)
     }
 }
 

@@ -15,6 +15,8 @@ struct ProfileConfig: Identifiable, Hashable, Codable {
     var usePathStyle: Bool
     /// 生产环境：禁止上传，连接时橙色标识
     var isProduction: Bool
+    /// 启动时自动连接的默认 Bucket，留空则不自动选桶
+    var defaultBucket: String
 
     var id: String { name }
 

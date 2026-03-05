@@ -99,10 +99,12 @@ aws_secret_access_key = wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY
 endpoint = http://minio:9000     # MinIO/LocalStack 自定义地址；留空=AWS 标准
 region = us-east-1               # 留空则继承 [default]
 path_style = true                # MinIO 需要开启；AWS S3 无需
+default_bucket = my-data-bucket  # 启动自动连接的 Bucket（可省略）
 
 [company-prod]
 aws_access_key_id = AKIAIOSFODNN7EXAMPLE
 aws_secret_access_key = wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY
+default_bucket = prod-data       # 切换到该环境时自动打开此桶
 # region/endpoint 省略则使用 [default] 值
 
 [staging-prod-fix]
