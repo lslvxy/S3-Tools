@@ -94,13 +94,13 @@ struct LogPanelView: View {
         }
         .onAppear {
             AppLogger.shared.configure(
-                environment: appState.currentEnvironment.displayName
+                environment: appState.selectedProfile?.name ?? "unknown"
             ) { entry in
                 appState.addLogEntry(entry)
             }
         }
-        .onChange(of: appState.currentEnvironment) { _, newEnv in
-            AppLogger.shared.configure(environment: newEnv.displayName) { entry in
+        .onChange(of: appState.selectedProfile) { _, newProfile in
+            AppLogger.shared.configure(environment: newProfile?.name ?? "unknown") { entry in
                 appState.addLogEntry(entry)
             }
         }

@@ -4,30 +4,41 @@ struct ToolbarView: ToolbarContent {
     @EnvironmentObject var appState: AppState
 
     var body: some ToolbarContent {
-        // 左侧：环境切换（menu 样式，避免 macOS 26 pill 形 segmented control）
+        // 左侧：环境切换（menu 样式）
         ToolbarItem(placement: .navigation) {
             HStack(spacing: 6) {
                 Picker("环境", selection: Binding(
-                    get: { appState.currentEnvironment },
-                    set: { newEnv in
-                        Task { await appState.switchEnvironment(to: newEnv) }
+                    get: { appState.selectedProfile?.name },
+                    set: { name in
+                        if let name,
+                           let profile = appState.availableProfiles.first(where: { $0.name == name }) {
+                            Task { await appState.switchProfile(to: profile) }
+                        }
                     }
                 )) {
-                    ForEach(S3Environment.allCases) { env in
-                        Text(env.displayName).tag(env)
+                    if appState.availableProfiles.isEmpty {
+                        Text("无可用环境").tag(Optional<String>.none)
+                    }
+                    ForEach(appState.availableProfiles) { profile in
+                        HStack(spacing: 4) {
+                            Image(systemName: profile.isProduction ? "cloud" : "desktopcomputer")
+                            Text(profile.name)
+                        }
+                        .tag(Optional(profile.name))
                     }
                 }
                 .pickerStyle(.menu)
                 .fixedSize()
                 .help("切换环境")
+                .disabled(appState.availableProfiles.isEmpty)
 
                 statusDot
             }
         }
 
-        // 右侧：上传开关（Offline 专用）
+        // 右侧：上传开关（非生产环境专用）
         ToolbarItem(placement: .primaryAction) {
-            if appState.currentEnvironment == .offline {
+            if !(appState.selectedProfile?.isProduction ?? true) {
                 Toggle(isOn: $appState.isUploadEnabled) {
                     Label(
                         appState.isUploadEnabled ? "上传已开" : "允许上传",

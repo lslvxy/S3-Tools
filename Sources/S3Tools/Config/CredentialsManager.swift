@@ -1,110 +1,80 @@
 import Foundation
 
-struct AWSCredentials {
-    let accessKeyId: String
-    let secretAccessKey: String
-    let sessionToken: String?
-}
-
 final class CredentialsManager {
 
-    enum CredentialError: Error, LocalizedError {
-        case notFound(String)
-        case invalidFormat(String)
+    // MARK: - 文件路径
 
-        var errorDescription: String? {
-            switch self {
-            case .notFound(let msg): return "凭证未找到: \(msg)"
-            case .invalidFormat(let msg): return "凭证格式错误: \(msg)"
-            }
-        }
-    }
-
-    /// 按优先级加载凭证：环境变量 > credentials 文件 > config 文件
-    func loadCredentials(for environment: S3Environment) throws -> AWSCredentials {
-        // 1. 环境变量
-        if let creds = loadFromEnvironment() {
-            return creds
-        }
-
-        // 2. ~/.aws/credentials
-        let profile = profileName(for: environment)
-        if let creds = try? loadFromCredentialsFile(profile: profile) {
-            return creds
-        }
-
-        // 3. ~/.aws/config
-        if let creds = try? loadFromConfigFile(profile: profile) {
-            return creds
-        }
-
-        throw CredentialError.notFound(
-            "未找到环境 '\(environment.displayName)' 的凭证。\n" +
-            "请在 ~/.aws/credentials 中添加 [\(profile)] 配置，或设置环境变量 AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY"
-        )
-    }
-
-    private func profileName(for env: S3Environment) -> String {
-        switch env {
-        case .offline: return "offline"
-        case .production: return "production"
-        }
-    }
-
-    // MARK: - 环境变量
-
-    private func loadFromEnvironment() -> AWSCredentials? {
-        let env = ProcessInfo.processInfo.environment
-        guard
-            let ak = env["AWS_ACCESS_KEY_ID"], !ak.isEmpty,
-            let sk = env["AWS_SECRET_ACCESS_KEY"], !sk.isEmpty
-        else { return nil }
-        let token = env["AWS_SESSION_TOKEN"]
-        return AWSCredentials(accessKeyId: ak, secretAccessKey: sk, sessionToken: token)
-    }
-
-    // MARK: - ~/.aws/credentials
-
-    private func loadFromCredentialsFile(profile: String) throws -> AWSCredentials {
-        let url = FileManager.default.homeDirectoryForCurrentUser
-            .appendingPathComponent(".aws/credentials")
-        guard FileManager.default.fileExists(atPath: url.path) else {
-            throw CredentialError.notFound("文件不存在: \(url.path)")
-        }
-        let sections = try INIParser.parse(url: url)
-        let section = sections[profile] ?? sections["default"]
-
-        guard let s = section,
-              let ak = s["aws_access_key_id"], !ak.isEmpty,
-              let sk = s["aws_secret_access_key"], !sk.isEmpty
-        else {
-            throw CredentialError.notFound("~/.aws/credentials 中未找到 profile: \(profile)")
-        }
-        return AWSCredentials(accessKeyId: ak, secretAccessKey: sk, sessionToken: s["aws_session_token"])
-    }
-
-    // MARK: - ~/.aws/config
-
-    private func loadFromConfigFile(profile: String) throws -> AWSCredentials {
-        let url = FileManager.default.homeDirectoryForCurrentUser
-            .appendingPathComponent(".aws/config")
-        guard FileManager.default.fileExists(atPath: url.path) else {
-            throw CredentialError.notFound("文件不存在: \(url.path)")
-        }
-        let sections = try INIParser.parse(url: url)
-        guard
-            let section = sections[profile],
-            let ak = section["aws_access_key_id"], !ak.isEmpty,
-            let sk = section["aws_secret_access_key"], !sk.isEmpty
-        else {
-            throw CredentialError.notFound("~/.aws/config 中未找到 profile: \(profile)")
-        }
-        return AWSCredentials(accessKeyId: ak, secretAccessKey: sk, sessionToken: section["aws_session_token"])
-    }
-
-    /// 返回 credentials 文件路径，供用户参考
-    var credentialsFilePath: String {
+    private var homeDir: URL {
         FileManager.default.homeDirectoryForCurrentUser
-            .appendingPathComponent(".aws/credentials").path
+    }
+
+    /// ~/.aws/s3tools 文件路径
+    var configFilePath: String {
+        homeDir.appendingPathComponent(".aws/s3tools").path
+    }
+
+    var configFileExists: Bool {
+        FileManager.default.fileExists(atPath: configFilePath)
+    }
+
+    // MARK: - 加载 Profiles
+
+    /// 解析 ~/.aws/s3tools，返回所有有效环境配置（按名称排序）
+    func loadProfiles() -> [ProfileConfig] {
+        let url = homeDir.appendingPathComponent(".aws/s3tools")
+        guard let sections = try? INIParser.parse(url: url) else { return [] }
+
+        // [default] 作为全局默认值
+        let defaultRegion = sections["default"]?["region"] ?? "ap-southeast-1"
+
+        return sections
+            .filter { $0.key != "default" }
+            .compactMap { (name, section) -> ProfileConfig? in
+                guard
+                    let ak = section["aws_access_key_id"], !ak.isEmpty,
+                    let sk = section["aws_secret_access_key"], !sk.isEmpty
+                else { return nil }
+
+                let region   = section["region"] ?? defaultRegion
+                let endpoint = section["endpoint"] ?? ""
+                let pathStyle = section["path_style"]?.lowercased() == "true"
+
+                // 生产判断：显式 is_production 优先，否则按名称启发
+                let isProduction: Bool
+                if let explicit = section["is_production"] {
+                    isProduction = explicit.lowercased() == "true"
+                } else {
+                    isProduction = ProfileConfig.detectsProduction(name: name)
+                }
+
+                return ProfileConfig(
+                    name: name,
+                    accessKeyId: ak,
+                    secretAccessKey: sk,
+                    sessionToken: section["aws_session_token"],
+                    region: region,
+                    endpoint: endpoint,
+                    usePathStyle: pathStyle,
+                    isProduction: isProduction
+                )
+            }
+            .sorted { $0.name < $1.name }
+    }
+
+    // MARK: - 凭证文件路径（保留，用于兼容标准 ~/.aws/credentials 说明）
+
+    var credentialsFilePath: String {
+        homeDir.appendingPathComponent(".aws/credentials").path
+    }
+
+    var credentialsFileExists: Bool {
+        FileManager.default.fileExists(atPath: credentialsFilePath)
+    }
+
+    /// 读取 ~/.aws/credentials 所有 profile 名（排除 default），供参考
+    func availableProfiles() -> [String] {
+        let url = homeDir.appendingPathComponent(".aws/credentials")
+        guard let sections = try? INIParser.parse(url: url) else { return [] }
+        return sections.keys.filter { $0 != "default" }.sorted()
     }
 }

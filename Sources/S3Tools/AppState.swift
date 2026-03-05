@@ -3,10 +3,11 @@ import Combine
 
 @MainActor
 final class AppState: ObservableObject {
-    // MARK: - Environment
-    @Published var currentEnvironment: S3Environment = .offline
+    // MARK: - Profile
+    @Published var availableProfiles: [ProfileConfig] = []
+    @Published var selectedProfile: ProfileConfig? = nil
     @Published var connectionStatus: ConnectionStatus = .disconnected
-    @Published var isUploadEnabled: Bool = false  // offline 环境上传开关
+    @Published var isUploadEnabled: Bool = false  // 非生产环境上传开关
 
     // MARK: - Buckets & Navigation
     @Published var buckets: [String] = []
@@ -91,7 +92,12 @@ final class AppState: ObservableObject {
 
     // MARK: - Environment Switching
 
-    func switchEnvironment(to env: S3Environment) async {
+    /// 重新读取 ~/.aws/s3tools 并更新可用 profile 列表
+    func reloadProfiles() {
+        availableProfiles = credentialsManager.loadProfiles()
+    }
+
+    func switchProfile(to profile: ProfileConfig) async {
         connectionStatus = .connecting
         selectedBucket = nil
         currentPrefix = ""
@@ -102,22 +108,17 @@ final class AppState: ObservableObject {
         continuationToken = nil
         filterPattern = ""
         objectCache.removeAll()
-        allObjectsCache.removeAll()  // 切换环境时清空全量缓存
+        allObjectsCache.removeAll()
 
         do {
-            let credentials = try credentialsManager.loadCredentials(for: env)
-            let config = appSettings.environmentConfigs[env] ?? EnvironmentConfig.default(for: env)
-            let service = try await S3Service(
-                credentials: credentials,
-                config: config,
-                environment: env
-            )
+            let service = try await S3Service(profile: profile)
             self.s3Service = service
-            self.currentEnvironment = env
+            self.selectedProfile = profile
             self.connectionStatus = .connected
             self.isUploadEnabled = false
+            self.appSettings.lastProfileName = profile.name
 
-            appLogger.log(action: "切换环境", detail: "切换到 \(env.displayName)", level: .info)
+            appLogger.log(action: "切换环境", detail: "切换到 [\(profile.name)]", level: .info)
             await loadBuckets()
         } catch {
             self.connectionStatus = .failed(error.localizedDescription)

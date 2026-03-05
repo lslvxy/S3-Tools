@@ -173,8 +173,8 @@ struct PathInputView: View {
                 .help("正则表达式批量下载")
                 .fixedSize()
 
-                // 上传按钮（仅 offline + 开关打开）
-                if appState.currentEnvironment == .offline && appState.isUploadEnabled {
+                // 上传按钮（非生产环境 + 开关打开）
+                if !(appState.selectedProfile?.isProduction ?? true) && appState.isUploadEnabled {
                     uploadButton
                 }
             }

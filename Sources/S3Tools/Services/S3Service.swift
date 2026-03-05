@@ -5,40 +5,36 @@ import SmithyIdentity
 
 final class S3Service {
     private let client: S3Client
-    private let environment: S3Environment
-    private let config: EnvironmentConfig
+    private let profile: ProfileConfig
     private let credResolver: StaticAWSCredentialIdentityResolver
     // 缓存各 region 的 S3Client，避免跨区域请求重复初始化
     private var regionalClients: [String: S3Client] = [:]
     // 缓存已检测到的 bucket 所属 region，listObjects/download 共享
     private var bucketRegionCache: [String: String] = [:]
 
-    init(credentials: AWSCredentials, config: EnvironmentConfig, environment: S3Environment) async throws {
-        self.environment = environment
-        self.config = config
+    init(profile: ProfileConfig) async throws {
+        self.profile = profile
 
         // 构建静态凭证 resolver
         let identity = AWSCredentialIdentity(
-            accessKey: credentials.accessKeyId,
-            secret: credentials.secretAccessKey,
-            sessionToken: credentials.sessionToken
+            accessKey: profile.accessKeyId,
+            secret: profile.secretAccessKey,
+            sessionToken: profile.sessionToken
         )
         let credResolver = StaticAWSCredentialIdentityResolver(identity)
         self.credResolver = credResolver
 
-        // 构建 S3 客户端配置（使用新版 S3ClientConfig API）
+        // 构建 S3 客户端配置
         var clientConfig = try await S3Client.S3ClientConfig(
             awsCredentialIdentityResolver: credResolver,
-            region: config.region.isEmpty ? "us-east-1" : config.region
+            region: profile.region.isEmpty ? "ap-southeast-1" : profile.region
         )
 
-        // offline 环境使用自定义 endpoint
-        if !config.endpoint.isEmpty {
-            clientConfig.endpoint = config.endpoint
+        if !profile.endpoint.isEmpty {
+            clientConfig.endpoint = profile.endpoint
         }
 
-        // MinIO / LocalStack 等需要 path-style
-        if config.usePathStyle {
+        if profile.usePathStyle {
             clientConfig.forcePathStyle = true
         }
 
@@ -52,8 +48,8 @@ final class S3Service {
             awsCredentialIdentityResolver: credResolver,
             region: region
         )
-        if !config.endpoint.isEmpty { cfg.endpoint = config.endpoint }
-        if config.usePathStyle { cfg.forcePathStyle = true }
+        if !profile.endpoint.isEmpty { cfg.endpoint = profile.endpoint }
+        if profile.usePathStyle { cfg.forcePathStyle = true }
         let newClient = S3Client(config: cfg)
         regionalClients[region] = newClient
         return newClient
@@ -71,7 +67,7 @@ final class S3Service {
     /// 返回 bucket 对应的正确 S3Client（优先读缓存，否则使用默认 client）
     private func clientForBucket(_ bucket: String) async -> S3Client {
         guard let cachedRegion = bucketRegionCache[bucket] else { return client }
-        let configuredRegion = config.region.isEmpty ? "us-east-1" : config.region
+        let configuredRegion = profile.region.isEmpty ? "ap-southeast-1" : profile.region
         guard cachedRegion != configuredRegion else { return client }
         return (try? await regionalClient(for: cachedRegion)) ?? client
     }
@@ -98,11 +94,11 @@ final class S3Service {
             )
         } catch {
             // 尝试 region 重定向：获取桶真实所在 region 并重试
-            guard config.endpoint.isEmpty,  // 自定义 endpoint 时不做重定向
+            guard profile.endpoint.isEmpty,  // 自定义 endpoint 时不做重定向
                   let bucketRegion = try? await getBucketRegion(bucket: bucket)
             else { throw error }
 
-            let configuredRegion = config.region.isEmpty ? "us-east-1" : config.region
+            let configuredRegion = profile.region.isEmpty ? "ap-southeast-1" : profile.region
             guard bucketRegion != configuredRegion else { throw error }
 
             // 缓存检测到的 region，供后续 download 等操作复用
@@ -198,10 +194,10 @@ final class S3Service {
             output = try await s3.getObject(input: input)
         } catch {
             // 若缓存 region 未命中，尝试检测真实 region 并重试
-            guard config.endpoint.isEmpty,
+            guard profile.endpoint.isEmpty,
                   let bucketRegion = try? await getBucketRegion(bucket: bucket)
             else { throw error }
-            let configuredRegion = config.region.isEmpty ? "us-east-1" : config.region
+            let configuredRegion = profile.region.isEmpty ? "ap-southeast-1" : profile.region
             guard bucketRegion != configuredRegion else { throw error }
             bucketRegionCache[bucket] = bucketRegion
             let regional = try await regionalClient(for: bucketRegion)
@@ -235,8 +231,8 @@ final class S3Service {
         fileURL: URL,
         progressHandler: @escaping (Double) -> Void
     ) async throws {
-        guard environment.allowsUpload else {
-            throw AppError.uploadDisabled("当前环境 \(environment.displayName) 不允许上传")
+        guard !profile.isProduction else {
+            throw AppError.uploadDisabled("生产环境 [\(profile.name)] 不允许上传")
         }
 
         let data = try Data(contentsOf: fileURL)

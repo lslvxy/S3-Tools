@@ -2,19 +2,17 @@ import SwiftUI
 
 struct SettingsView: View {
     @EnvironmentObject var appState: AppState
-    @State private var selectedTab: SettingsTab = .environments
+    @State private var selectedTab: SettingsTab = .profiles
 
     enum SettingsTab: String, CaseIterable {
-        case environments = "环境配置"
+        case profiles = "环境 Profiles"
         case download = "下载"
-        case credentials = "凭证说明"
         case about = "关于"
 
         var icon: String {
             switch self {
-            case .environments: return "server.rack"
+            case .profiles: return "server.rack"
             case .download: return "arrow.down.circle"
-            case .credentials: return "key"
             case .about: return "info.circle"
             }
         }
@@ -22,111 +20,194 @@ struct SettingsView: View {
 
     var body: some View {
         TabView(selection: $selectedTab) {
-            EnvironmentSettingsTab()
-                .tabItem {
-                    Label(SettingsTab.environments.rawValue, systemImage: SettingsTab.environments.icon)
-                }
-                .tag(SettingsTab.environments)
+            ProfilesTab()
+                .tabItem { Label(SettingsTab.profiles.rawValue, systemImage: SettingsTab.profiles.icon) }
+                .tag(SettingsTab.profiles)
 
             DownloadSettingsTab()
-                .tabItem {
-                    Label(SettingsTab.download.rawValue, systemImage: SettingsTab.download.icon)
-                }
+                .tabItem { Label(SettingsTab.download.rawValue, systemImage: SettingsTab.download.icon) }
                 .tag(SettingsTab.download)
 
-            CredentialsGuideTab()
-                .tabItem {
-                    Label(SettingsTab.credentials.rawValue, systemImage: SettingsTab.credentials.icon)
-                }
-                .tag(SettingsTab.credentials)
-
             AboutTab()
-                .tabItem {
-                    Label(SettingsTab.about.rawValue, systemImage: SettingsTab.about.icon)
-                }
+                .tabItem { Label(SettingsTab.about.rawValue, systemImage: SettingsTab.about.icon) }
                 .tag(SettingsTab.about)
         }
-        .frame(width: 560, height: 420)
+        .frame(width: 580, height: 460)
     }
 }
 
-// MARK: - 环境配置 Tab
+// MARK: - Profiles Tab（只读展示 ~/.aws/s3tools 解析结果）
 
-struct EnvironmentSettingsTab: View {
+struct ProfilesTab: View {
     @EnvironmentObject var appState: AppState
+    @State private var profiles: [ProfileConfig] = []
 
     var body: some View {
-        Form {
-            ForEach(S3Environment.allCases) { env in
-                Section(env.displayName) {
-                    EnvironmentConfigForm(
-                        env: env,
-                        config: Binding(
-                            get: { appState.appSettings.environmentConfigs[env] ?? .default(for: env) },
-                            set: { appState.appSettings.environmentConfigs[env] = $0 }
+        ScrollView {
+            VStack(alignment: .leading, spacing: 12) {
+
+                // ── 文件状态 ──────────────────────────────────────────────
+                HStack(spacing: 8) {
+                    let exists = appState.credentialsManager.configFileExists
+                    Image(systemName: exists ? "checkmark.circle.fill" : "xmark.circle.fill")
+                        .foregroundStyle(exists ? .green : .red)
+                    Text(appState.credentialsManager.configFilePath)
+                        .font(.system(.caption, design: .monospaced))
+                        .foregroundStyle(.secondary)
+                    Spacer()
+                    Button("刷新") {
+                        profiles = appState.credentialsManager.loadProfiles()
+                    }
+                    .buttonStyle(.borderless)
+                    Button("打开文件夹") {
+                        NSWorkspace.shared.open(
+                            URL(fileURLWithPath: appState.credentialsManager.configFilePath)
+                                .deletingLastPathComponent()
                         )
-                    )
+                    }
+                    .buttonStyle(.borderless)
                 }
-            }
-        }
-        .formStyle(.grouped)
-        .padding()
-    }
-}
+                .padding(.horizontal, 4)
 
-struct EnvironmentConfigForm: View {
-    let env: S3Environment
-    @Binding var config: EnvironmentConfig
-
-    var body: some View {
-        LabeledContent("Endpoint") {
-            if env == .production {
-                Text("AWS 标准 Endpoint（根据 Region 自动选定）")
-                    .foregroundStyle(.secondary)
-            } else {
-                VStack(alignment: .leading, spacing: 2) {
-                    TextField("留空使用 AWS 标准（或填入 http://minio:9000）", text: $config.endpoint)
-                        .textFieldStyle(.roundedBorder)
-                    Text("留空 = AWS S3 标准 Endpoint；如需 MinIO/LocalStack 请填写自定义地址")
+                if profiles.isEmpty {
+                    Text("~/.aws/s3tools 文件不存在或未配置任何 profile")
+                        .foregroundStyle(.secondary)
+                        .font(.caption)
+                        .padding(.horizontal, 4)
+                } else {
+                    // ── Profile 列表 ──────────────────────────────────────
+                    Text("共 \(profiles.count) 个环境（全部来自 ~/.aws/s3tools，不可在此编辑）")
                         .font(.caption)
                         .foregroundStyle(.secondary)
+                        .padding(.horizontal, 4)
+
+                    ForEach(profiles) { profile in
+                        ProfileRow(profile: profile)
+                    }
+                }
+
+                // ── 配置格式说明（始终展示）────────────────────────────────
+                GroupBox("配置文件格式说明") {
+                    VStack(alignment: .leading, spacing: 8) {
+                        codeBlock("""
+[default]
+region = ap-southeast-1          # 全局默认 region（可省略）
+
+[my-offline]
+aws_access_key_id = AKIAIOSFODNN7EXAMPLE
+aws_secret_access_key = wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY
+endpoint = http://minio:9000     # MinIO/LocalStack 自定义地址；留空=AWS 标准
+region = us-east-1               # 留空则继承 [default]
+path_style = true                # MinIO 需要开启；AWS S3 无需
+
+[company-prod]
+aws_access_key_id = AKIAIOSFODNN7EXAMPLE
+aws_secret_access_key = wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY
+# region/endpoint 省略则使用 [default] 值
+
+[staging-prod-fix]
+aws_access_key_id = AKIAIOSFODNN7EXAMPLE
+aws_secret_access_key = wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY
+is_production = false            # 名字含 "prod" 但显式声明为非生产（允许上传）
+""")
+                        VStack(alignment: .leading, spacing: 4) {
+                            Label("生产环境自动判断", systemImage: "info.circle")
+                                .font(.caption.bold())
+                                .foregroundStyle(.secondary)
+                            Text("名称含 prod / production / live / online / prd → 自动标记为生产（禁止上传）")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                            Text("用 is_production = false 可强制覆盖自动判断结果")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
+                    }
+                    .padding(4)
                 }
             }
+            .padding()
         }
+        .onAppear {
+            profiles = appState.credentialsManager.loadProfiles()
+        }
+    }
 
-        LabeledContent("Region") {
-            TextField("us-east-1", text: $config.region)
-                .textFieldStyle(.roundedBorder)
-        }
-
-        LabeledContent("Profile 名称") {
-            TextField("offline / production", text: $config.profile)
-                .textFieldStyle(.roundedBorder)
-            Text("对应 ~/.aws/credentials 中的 [\(config.profile)] 段")
-                .font(.caption)
-                .foregroundStyle(.secondary)
-        }
-
-        if env == .offline {
-            LabeledContent("Path-style URL") {
-                Toggle("", isOn: $config.usePathStyle)
-                Text("使用 MinIO / LocalStack 等自定义 Endpoint 时需开启；AWS S3 标准无需开启")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-            }
-        }
-
-        if env == .production {
-            LabeledContent("上传限制") {
-                Label("Production 环境永久禁止上传", systemImage: "lock.fill")
-                    .foregroundStyle(.red)
-                    .font(.caption)
-            }
-        }
+    @ViewBuilder
+    private func codeBlock(_ content: String) -> some View {
+        Text(content)
+            .font(.system(.caption, design: .monospaced))
+            .padding(8)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(Color(nsColor: .textBackgroundColor))
+            .cornerRadius(6)
+            .overlay(RoundedRectangle(cornerRadius: 6)
+                .stroke(Color(nsColor: .separatorColor), lineWidth: 0.5))
     }
 }
 
-// MARK: - 下载設置 Tab
+struct ProfileRow: View {
+    let profile: ProfileConfig
+
+    var body: some View {
+        GroupBox {
+            VStack(alignment: .leading, spacing: 6) {
+                // 标题行
+                HStack {
+                    Image(systemName: profile.isProduction ? "cloud.fill" : "desktopcomputer")
+                        .foregroundStyle(profile.isProduction ? .orange : .green)
+                    Text(profile.name)
+                        .fontWeight(.semibold)
+                    if profile.isProduction {
+                        Label("生产", systemImage: "lock.fill")
+                            .font(.caption)
+                            .padding(.horizontal, 6)
+                            .padding(.vertical, 2)
+                            .background(Color.orange.opacity(0.15))
+                            .foregroundStyle(.orange)
+                            .cornerRadius(4)
+                    }
+                    Spacer()
+                }
+
+                Divider()
+
+                // 配置详情（只读）
+                Grid(alignment: .leading, horizontalSpacing: 12, verticalSpacing: 4) {
+                    GridRow {
+                        Text("Region").foregroundStyle(.secondary).font(.caption)
+                        Text(profile.region).font(.system(.caption, design: .monospaced))
+                    }
+                    if !profile.endpoint.isEmpty {
+                        GridRow {
+                            Text("Endpoint").foregroundStyle(.secondary).font(.caption)
+                            Text(profile.endpoint).font(.system(.caption, design: .monospaced))
+                        }
+                    }
+                    if profile.usePathStyle {
+                        GridRow {
+                            Text("Path-style").foregroundStyle(.secondary).font(.caption)
+                            Text("已开启").font(.caption)
+                        }
+                    }
+                    GridRow {
+                        Text("Access Key").foregroundStyle(.secondary).font(.caption)
+                        Text(maskedKey(profile.accessKeyId)).font(.system(.caption, design: .monospaced))
+                    }
+                }
+            }
+            .padding(4)
+        }
+    }
+
+    private func maskedKey(_ key: String) -> String {
+        guard key.count > 8 else { return String(repeating: "•", count: key.count) }
+        let prefix = key.prefix(4)
+        let suffix = key.suffix(4)
+        return "\(prefix)••••••••\(suffix)"
+    }
+}
+
+// MARK: - 下载设置 Tab
 
 struct DownloadSettingsTab: View {
     @EnvironmentObject var appState: AppState
@@ -193,79 +274,6 @@ struct DownloadSettingsTab: View {
     }
 }
 
-// MARK: - 凭证说明 Tab
-
-struct CredentialsGuideTab: View {
-    @EnvironmentObject var appState: AppState
-
-    var body: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: 16) {
-                Text("凭证配置说明")
-                    .font(.headline)
-
-                GroupBox("方式一：~/.aws/credentials 文件（推荐）") {
-                    VStack(alignment: .leading, spacing: 6) {
-                        Text("路径：\(appState.credentialsManager.credentialsFilePath)")
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                        codeBlock("""
-[offline]
-aws_access_key_id = YOUR_OFFLINE_AK
-aws_secret_access_key = YOUR_OFFLINE_SK
-
-[production]
-aws_access_key_id = YOUR_PROD_AK
-aws_secret_access_key = YOUR_PROD_SK
-""")
-                    }
-                    .padding(4)
-                }
-
-                GroupBox("方式二：环境变量") {
-                    codeBlock("""
-export AWS_ACCESS_KEY_ID=YOUR_AK
-export AWS_SECRET_ACCESS_KEY=YOUR_SK
-export AWS_SESSION_TOKEN=YOUR_TOKEN  # 可选
-""")
-                    .padding(4)
-                }
-
-                GroupBox("读取优先级") {
-                    VStack(alignment: .leading, spacing: 4) {
-                        Text("1. 环境变量（优先级最高）")
-                        Text("2. ~/.aws/credentials 中对应 profile")
-                        Text("3. ~/.aws/config 中对应 profile")
-                        Text("4. 读取失败则提示凭证错误")
-                    }
-                    .font(.caption)
-                    .padding(4)
-                }
-
-                Button("在 Finder 中打开 .aws 目录") {
-                    let dir = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".aws")
-                    NSWorkspace.shared.open(dir)
-                }
-            }
-            .padding()
-        }
-    }
-
-    @ViewBuilder
-    private func codeBlock(_ content: String) -> some View {
-        Text(content)
-            .font(.system(.body, design: .monospaced))
-            .padding(8)
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .background(Color(nsColor: .textBackgroundColor))
-            .cornerRadius(6)
-            .overlay(
-                RoundedRectangle(cornerRadius: 6)
-                    .stroke(Color(nsColor: .separatorColor), lineWidth: 0.5)
-            )
-    }
-}
-
 // MARK: - 关于 Tab
 
 struct AboutTab: View {
@@ -303,3 +311,4 @@ struct AboutTab: View {
         .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 }
+

@@ -59,8 +59,13 @@ struct MainView: View {
             ToolbarView()
         }
         .task {
-            // 自动连接到上次使用的环境
-            await appState.switchEnvironment(to: appState.appSettings.lastEnvironment)
+            // 读取 ~/.aws/s3tools，自动连接上次使用的 profile
+            appState.reloadProfiles()
+            let lastName = appState.appSettings.lastProfileName
+            if let profile = appState.availableProfiles.first(where: { $0.name == lastName })
+                               ?? appState.availableProfiles.first {
+                await appState.switchProfile(to: profile)
+            }
         }
         .onReceive(NotificationCenter.default.publisher(for: .refreshRequested)) { _ in
             Task {
