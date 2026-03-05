@@ -93,6 +93,13 @@ struct FileListView: View {
                                 Task { await appState.enqueueDownloads(objects: objs) }
                             }
                             Divider()
+                            Button("复制名称") {
+                                let names = appState.objects
+                                    .filter { keys.contains($0.key) }
+                                    .map { $0.displayName }
+                                NSPasteboard.general.clearContents()
+                                NSPasteboard.general.setString(names.joined(separator: "\n"), forType: .string)
+                            }
                             Button("复制路径") {
                                 NSPasteboard.general.clearContents()
                                 NSPasteboard.general.setString(keys.joined(separator: "\n"), forType: .string)

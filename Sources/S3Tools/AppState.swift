@@ -32,6 +32,7 @@ final class AppState: ObservableObject {
     // MARK: - Download
     @Published var downloadTasks: [DownloadTask] = []
     @Published var downloadDirectory: URL = FileManager.default.urls(for: .downloadsDirectory, in: .userDomainMask)[0]
+    private var downloadHandles: [UUID: Task<Void, Never>] = [:]
 
     // MARK: - Logs
     @Published var logEntries: [LogEntry] = []
@@ -217,29 +218,43 @@ final class AppState: ObservableObject {
 
     func enqueueDownloads(objects: [S3Object]) async {
         guard let service = s3Service, let bucket = selectedBucket else { return }
+        var newTasks: [DownloadTask] = []
         for obj in objects where !obj.isDirectory {
             let task = DownloadTask(key: obj.key, bucket: bucket, size: obj.size ?? 0, destinationDir: downloadDirectory)
             downloadTasks.append(task)
+            newTasks.append(task)
         }
-        let tasks = downloadTasks.filter { $0.status == .pending }
-        appLogger.log(action: "加入下载队列", detail: "\(tasks.count) 个文件", level: .info)
-        await downloadManager.startDownloads(
-            tasks: downloadTasks.filter { $0.status == .pending },
-            service: service
-        ) { [weak self] updatedTask in
-            await MainActor.run {
-                if let idx = self?.downloadTasks.firstIndex(where: { $0.id == updatedTask.id }) {
-                    self?.downloadTasks[idx] = updatedTask
-                }
-                switch updatedTask.status {
-                case .completed:
-                    self?.appLogger.log(action: "下载完成", detail: updatedTask.key, level: .info)
-                case .failed(let reason):
-                    self?.appLogger.log(action: "下载失败", detail: "\(updatedTask.key): \(reason)", level: .error)
-                default:
-                    break
+        appLogger.log(action: "加入下载队列", detail: "\(newTasks.count) 个文件", level: .info)
+
+        for task in newTasks {
+            let handle = Task { [weak self] in
+                guard let self else { return }
+                await self.downloadManager.executeSingle(task: task, service: service) { updatedTask in
+                    await MainActor.run {
+                        guard let idx = self.downloadTasks.firstIndex(where: { $0.id == updatedTask.id }) else { return }
+                        // Don't overwrite a cancelled status with stale progress callbacks
+                        if case .cancelled = self.downloadTasks[idx].status { return }
+                        self.downloadTasks[idx] = updatedTask
+                        switch updatedTask.status {
+                        case .completed:
+                            self.appLogger.log(action: "下载完成", detail: updatedTask.key, level: .info)
+                        case .failed(let reason):
+                            self.appLogger.log(action: "下载失败", detail: "\(updatedTask.key): \(reason)", level: .error)
+                        default:
+                            break
+                        }
+                    }
                 }
             }
+            downloadHandles[task.id] = handle
+        }
+    }
+
+    func cancelDownload(id: UUID) {
+        downloadHandles[id]?.cancel()
+        downloadHandles.removeValue(forKey: id)
+        if let idx = downloadTasks.firstIndex(where: { $0.id == id }) {
+            downloadTasks[idx].status = .cancelled
         }
     }
 

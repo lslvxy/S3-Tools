@@ -2,47 +2,58 @@ import Foundation
 
 actor DownloadManager {
     private var maxConcurrent: Int = 4
-    private var activeTasks: Int = 0
+    private var running: Int = 0
+    private var waiters: [CheckedContinuation<Void, Never>] = []
 
     func configure(maxConcurrent: Int) {
         self.maxConcurrent = max(1, min(maxConcurrent, 16))
     }
 
-    func startDownloads(
-        tasks: [DownloadTask],
-        service: S3Service,
-        onTaskUpdated: @escaping (DownloadTask) async -> Void
-    ) async {
-        await withTaskGroup(of: Void.self) { group in
-            var pending = tasks
-            var running = 0
-
-            while !pending.isEmpty || running > 0 {
-                while running < maxConcurrent && !pending.isEmpty {
-                    var task = pending.removeFirst()
-                    running += 1
-                    group.addTask {
-                        await self.executeDownload(task: &task, service: service, onTaskUpdated: onTaskUpdated)
-                    }
-                }
-                await group.next()
-                running = max(0, running - 1)
-            }
+    /// Acquire a concurrency slot, suspending until one is available.
+    private func acquireSlot() async {
+        if running < maxConcurrent {
+            running += 1
+            return
+        }
+        await withCheckedContinuation { cont in
+            waiters.append(cont)
         }
     }
 
-    private func executeDownload(
-        task: inout DownloadTask,
+    /// Release a concurrency slot, resuming the next waiter if any.
+    private func releaseSlot() {
+        if let next = waiters.first {
+            waiters.removeFirst()
+            next.resume()
+        } else {
+            running = max(0, running - 1)
+        }
+    }
+
+    /// Execute a single download, honouring structured concurrency cancellation.
+    func executeSingle(
+        task: DownloadTask,
         service: S3Service,
         onTaskUpdated: @escaping (DownloadTask) async -> Void
     ) async {
+        // Wait for a concurrency slot (also cancellable while waiting).
+        await acquireSlot()
+        defer { releaseSlot() }
+
         var mutableTask = task
+
+        // Skip if already cancelled before we even start.
+        if Task.isCancelled {
+            mutableTask.status = .cancelled
+            await onTaskUpdated(mutableTask)
+            return
+        }
+
         mutableTask.status = .inProgress(0)
         mutableTask.startedAt = Date()
         await onTaskUpdated(mutableTask)
 
         do {
-            // 确保下载目录存在
             try FileManager.default.createDirectory(
                 at: mutableTask.destinationDir,
                 withIntermediateDirectories: true
@@ -66,6 +77,8 @@ actor DownloadManager {
             mutableTask.bytesDownloaded = mutableTask.size
             mutableTask.localURL = mutableTask.destinationURL
 
+        } catch is CancellationError {
+            mutableTask.status = .cancelled
         } catch {
             mutableTask.status = .failed(error.localizedDescription)
         }
@@ -73,3 +86,4 @@ actor DownloadManager {
         await onTaskUpdated(mutableTask)
     }
 }
+

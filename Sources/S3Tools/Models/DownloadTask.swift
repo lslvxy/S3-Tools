@@ -5,6 +5,7 @@ enum DownloadStatus: Equatable {
     case inProgress(Double)  // 0.0 ~ 1.0
     case completed
     case failed(String)
+    case cancelled
 
     var displayText: String {
         switch self {
@@ -12,6 +13,7 @@ enum DownloadStatus: Equatable {
         case .inProgress(let p): return String(format: "%.0f%%", p * 100)
         case .completed: return "完成"
         case .failed(let msg): return "失败: \(msg)"
+        case .cancelled: return "已取消"
         }
     }
 
@@ -21,6 +23,7 @@ enum DownloadStatus: Equatable {
         case .inProgress(let p): return p
         case .completed: return 1.0
         case .failed: return 0
+        case .cancelled: return 0
         }
     }
 }

@@ -7,6 +7,7 @@ struct DownloadProgressView: View {
     private var activeTasks: [DownloadTask] {
         appState.downloadTasks.filter {
             if case .completed = $0.status { return false }
+            if case .cancelled = $0.status { return false }
             return true
         }
     }
@@ -46,14 +47,17 @@ struct DownloadProgressView: View {
                 Spacer()
 
                 Button {
-                    // 清除已完成任务
-                    appState.downloadTasks.removeAll { $0.status == .completed }
+                    appState.downloadTasks.removeAll {
+                        $0.status == .completed || $0.status == .cancelled
+                    }
                 } label: {
                     Text("清除完成")
                 }
                 .buttonStyle(.borderless)
                 .font(.caption)
-                .disabled(!appState.downloadTasks.contains { $0.status == .completed })
+                .disabled(!appState.downloadTasks.contains {
+                    $0.status == .completed || $0.status == .cancelled
+                })
 
                 Button {
                     withAnimation { isExpanded.toggle() }
@@ -70,7 +74,9 @@ struct DownloadProgressView: View {
                 ScrollView {
                     LazyVStack(spacing: 0) {
                         ForEach(appState.downloadTasks) { task in
-                            DownloadTaskRow(task: task)
+                            DownloadTaskRow(task: task) {
+                                appState.cancelDownload(id: task.id)
+                            }
                             Divider().padding(.leading, 12)
                         }
                     }
@@ -84,6 +90,7 @@ struct DownloadProgressView: View {
 
 struct DownloadTaskRow: View {
     let task: DownloadTask
+    let onCancel: () -> Void
 
     var body: some View {
         HStack(spacing: 10) {
@@ -121,6 +128,19 @@ struct DownloadTaskRow: View {
                     .foregroundStyle(.secondary)
             }
 
+            // 取消按钮（等待中 / 下载中）
+            switch task.status {
+            case .pending, .inProgress:
+                Button { onCancel() } label: {
+                    Image(systemName: "xmark.circle")
+                        .foregroundStyle(.secondary)
+                }
+                .buttonStyle(.borderless)
+                .help("取消下载")
+            default:
+                EmptyView()
+            }
+
             // 打开文件按钮（完成后）
             if task.status == .completed, let url = task.localURL {
                 Button {
@@ -147,6 +167,8 @@ struct DownloadTaskRow: View {
             Image(systemName: "checkmark.circle.fill").foregroundStyle(.green)
         case .failed:
             Image(systemName: "xmark.circle.fill").foregroundStyle(.red)
+        case .cancelled:
+            Image(systemName: "minus.circle.fill").foregroundStyle(.secondary)
         }
     }
 
@@ -156,6 +178,7 @@ struct DownloadTaskRow: View {
         case .inProgress: return .blue
         case .completed: return .green
         case .failed: return .red
+        case .cancelled: return .secondary
         }
     }
 }
