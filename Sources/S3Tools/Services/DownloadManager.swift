@@ -54,8 +54,9 @@ actor DownloadManager {
         await onTaskUpdated(mutableTask)
 
         do {
+            // 按 bucket/key 结构创建子目录
             try FileManager.default.createDirectory(
-                at: mutableTask.destinationDir,
+                at: mutableTask.destinationURL.deletingLastPathComponent(),
                 withIntermediateDirectories: true
             )
 

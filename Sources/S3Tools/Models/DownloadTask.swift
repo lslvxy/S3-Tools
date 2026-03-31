@@ -54,8 +54,12 @@ struct DownloadTask: Identifiable {
         key.split(separator: "/").last.map(String.init) ?? key
     }
 
+    /// 保留 bucket 及 key 中的完整目录结构：
+    /// downloadDirectory/<bucket>/<key>  e.g. ~/Downloads/my-bucket/data/2026/report.csv
     var destinationURL: URL {
-        destinationDir.appendingPathComponent(fileName)
+        destinationDir
+            .appendingPathComponent(bucket)
+            .appendingPathComponent(key)
     }
 
     var speedText: String {

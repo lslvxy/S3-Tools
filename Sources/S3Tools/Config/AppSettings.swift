@@ -57,12 +57,25 @@ final class AppSettings: ObservableObject {
         let defaultDownload = FileManager.default.urls(for: .downloadsDirectory, in: .userDomainMask)[0].path
         downloadDirectory = defaults.string(forKey: "downloadDirectory") ?? defaultDownload
 
-        // 加载书签（首次启动时以内置列表为默认值）
-        if let data = defaults.data(forKey: "bookmarks"),
-           let saved = try? JSONDecoder().decode([BookmarkEntry].self, from: data) {
+        // 加载书签（版本迁移：defaultsVersion 变更时重置内置条目，保留用户自添加条目）
+        let savedVersion = defaults.integer(forKey: "bookmarksVersion")
+        if savedVersion < QuickJumpEntry.defaultsVersion {
+            let defaultNames = Set(BookmarkEntry.defaults.map(\.name))
+            let userAdded: [BookmarkEntry]
+            if let data = defaults.data(forKey: "bookmarks"),
+               let saved = try? JSONDecoder().decode([BookmarkEntry].self, from: data) {
+                userAdded = saved.filter { !defaultNames.contains($0.name) }
+            } else {
+                userAdded = []
+            }
+            bookmarks = BookmarkEntry.defaults + userAdded
+            defaults.set(QuickJumpEntry.defaultsVersion, forKey: "bookmarksVersion")
+        } else if let data = defaults.data(forKey: "bookmarks"),
+                  let saved = try? JSONDecoder().decode([BookmarkEntry].self, from: data) {
             bookmarks = saved
         } else {
             bookmarks = BookmarkEntry.defaults
+            defaults.set(QuickJumpEntry.defaultsVersion, forKey: "bookmarksVersion")
         }
     }
 }

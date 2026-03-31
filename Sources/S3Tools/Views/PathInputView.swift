@@ -10,7 +10,6 @@ struct PathInputView: View {
     @State private var showAddBookmark = false
     @State private var addBookmarkName = ""
     @State private var addBookmarkPath = ""
-    @State private var suppressPathSync = false
     @FocusState private var pathFocused: Bool
 
     var body: some View {
@@ -95,7 +94,7 @@ struct PathInputView: View {
                         Divider()
                         ForEach(appState.appSettings.bookmarks) { entry in
                             Button {
-                                jumpTo(path: entry.path)
+                                jumpTo(path: entry.resolvedPath)
                             } label: {
                                 VStack(alignment: .leading) {
                                     Text(entry.name)
@@ -212,12 +211,9 @@ struct PathInputView: View {
             pathInput = appState.currentPrefix
         }
         // 当外部（FileListView 导航、侧边栏选 bucket）改变前缀时，同步到输入框
+        // 若同时设置了 filterPattern（文件前缀跳转），一并追加到地址栏
         .onChange(of: appState.currentPrefix) { _, newVal in
-            if suppressPathSync {
-                suppressPathSync = false
-            } else {
-                pathInput = newVal
-            }
+            pathInput = newVal + appState.filterPattern
         }
         .onChange(of: appState.selectedBucket) { _, _ in
             pathInput = appState.currentPrefix
@@ -253,9 +249,8 @@ struct PathInputView: View {
                 filePrefix = path
             }
             appState.clearFilterSilently()
-            suppressPathSync = true
-            pathInput = path
             appState.currentPrefix = dirPrefix
+            // onChange(of: currentPrefix) 会将地址栏更新为 dirPrefix+filePrefix（含日期）
             // 设置 filterPattern 会自动触发 scheduleFilterLoad，请求 dirPrefix+filePrefix
             appState.filterPattern = filePrefix
         }
@@ -449,6 +444,43 @@ struct BookmarkManagerSheet: View {
 
             Divider()
 
+            // 时间变量说明
+            VStack(alignment: .leading, spacing: 4) {
+                Label("路径中可使用时间变量，点击书签时自动替换为当前日期", systemImage: "calendar")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                Grid(alignment: .leading, horizontalSpacing: 16, verticalSpacing: 2) {
+                    GridRow {
+                        Text("{Y}").foregroundStyle(.blue)
+                        Text("年，如 2026")
+                        Text("{M}").foregroundStyle(.blue)
+                        Text("月，如 03")
+                        Text("{D}").foregroundStyle(.blue)
+                        Text("日，如 31")
+                    }
+                    GridRow {
+                        Text("{YM}").foregroundStyle(.blue)
+                        Text("年月，如 202603")
+                        Text("{YMD}").foregroundStyle(.blue)
+                        Text("年月日，如 20260331")
+                        Text("{D1}").foregroundStyle(.blue)
+                        Text("日十位，如 3")
+                    }
+                    GridRow {
+                        Text("{YMD1}").foregroundStyle(.blue)
+                        Text("年月日十位，如 2026033  →  匹配 30~39 号")
+                            .gridCellColumns(5)
+                    }
+                }
+                .font(.system(.caption, design: .monospaced))
+            }
+            .padding(.horizontal, 12)
+            .padding(.vertical, 8)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(Color(nsColor: .controlBackgroundColor))
+
+            Divider()
+
             if appState.appSettings.bookmarks.isEmpty {
                 ContentUnavailableView(
                     "暂无书签",
@@ -508,7 +540,7 @@ struct BookmarkManagerSheet: View {
             .padding(.vertical, 8)
             .background(Color(nsColor: .controlBackgroundColor))
         }
-        .frame(width: 500, height: 460)
+        .frame(width: 560, height: 530)
         .sheet(isPresented: $showAddSheet) {
             VStack(spacing: 16) {
                 Text("添加书签")
@@ -521,6 +553,39 @@ struct BookmarkManagerSheet: View {
                     TextField("例: FromAntFinancial/SOV/Markoff/done/", text: $newPath)
                         .textFieldStyle(.roundedBorder)
                         .font(.system(.body, design: .monospaced))
+                }
+                GroupBox {
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("可用时间变量（点击书签时自动替换）")
+                            .font(.caption2)
+                            .foregroundStyle(.secondary)
+                            .padding(.bottom, 2)
+                        Grid(alignment: .leading, horizontalSpacing: 12, verticalSpacing: 2) {
+                            GridRow {
+                                Text("{Y}").foregroundStyle(.blue)
+                                Text("年")
+                                Text("{M}").foregroundStyle(.blue)
+                                Text("月")
+                                Text("{D}").foregroundStyle(.blue)
+                                Text("日")
+                            }
+                            GridRow {
+                                Text("{YM}").foregroundStyle(.blue)
+                                Text("年月")
+                                Text("{YMD}").foregroundStyle(.blue)
+                                Text("年月日")
+                                Text("{D1}").foregroundStyle(.blue)
+                                Text("日十位")
+                            }
+                            GridRow {
+                                Text("{YMD1}").foregroundStyle(.blue)
+                                Text("年月+日十位，如 2026033 匹配 30~39 号")
+                                    .gridCellColumns(5)
+                            }
+                        }
+                        .font(.system(.caption2, design: .monospaced))
+                    }
+                    .frame(maxWidth: .infinity, alignment: .leading)
                 }
                 HStack {
                     Button("取消") { showAddSheet = false }

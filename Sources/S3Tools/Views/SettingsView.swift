@@ -289,7 +289,7 @@ struct AboutTab: View {
                 .font(.largeTitle)
                 .fontWeight(.bold)
 
-            Text("版本 1.0.0")
+            Text("版本 1.0.1")
                 .foregroundStyle(.secondary)
 
             Text("一个支持 macOS 的 S3 图形化工具\n支持多环境、批量下载、路径自动补全")
