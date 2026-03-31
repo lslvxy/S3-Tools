@@ -13,6 +13,7 @@ set -euo pipefail
 
 # ─── 配置 ────────────────────────────────────────────────────────────────────
 APP_NAME="S3Tools"
+VERSION="1.0.1"
 SCHEME="S3Tools"
 BUNDLE_ID="com.s3tools.app"
 MIN_MACOS="14.0"
@@ -20,7 +21,7 @@ BUILD_DIR="$(pwd)/.build"
 DIST_DIR="$(pwd)/dist"
 ARCHIVE_PATH="$DIST_DIR/$APP_NAME.xcarchive"
 APP_PATH="$DIST_DIR/$APP_NAME.app"
-DMG_PATH="$DIST_DIR/$APP_NAME.dmg"
+DMG_PATH="$DIST_DIR/$APP_NAME-$VERSION.dmg"
 EXPORT_PLIST="$(pwd)/ExportOptions.plist"
 
 # 颜色输出
@@ -173,7 +174,7 @@ assemble_app_bundle_from_swift_build() {
 # ─── 生成 Info.plist ──────────────────────────────────────────────────────────
 generate_info_plist() {
     local plist_path="$1"
-    local version="1.0.0"
+    local version="$VERSION"
     local build_num
     build_num="$(date +%Y%m%d%H%M)"
 
