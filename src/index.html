@@ -1,0 +1,258 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>S3 Rust</title>
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <div id="app">
+    <!-- ── Toolbar ─────────────────────────────────────────── -->
+    <header id="toolbar">
+      <div class="toolbar-left">
+        <select id="profileSelect" title="切换环境"></select>
+        <span id="statusDot" class="dot"></span>
+        <span id="statusText">未连接</span>
+      </div>
+      <div class="toolbar-right">
+        <button id="uploadToggle" class="toolbar-btn hidden" title="允许上传（谨慎操作）">⬆ 允许上传</button>
+        <button id="refreshBtn" class="toolbar-btn" title="强制刷新，忽略缓存 (⌘R)">⟳</button>
+        <button id="settingsBtn" class="toolbar-btn" title="设置">⚙</button>
+      </div>
+    </header>
+
+    <div id="main">
+      <!-- ── Sidebar ───────────────────────────────────────── -->
+      <aside id="sidebar">
+        <div class="sidebar-header">
+          <span>🖴 Buckets</span>
+          <span id="bucketLoading" class="small-spinner hidden"></span>
+        </div>
+        <div id="bucketSearchWrap" class="hidden">
+          <span class="search-icon">🔍</span>
+          <input id="bucketSearch" type="text" placeholder="筛选 bucket" />
+          <button id="bucketSearchClear" class="clear-btn hidden">✕</button>
+        </div>
+        <div id="bucketList" class="bucket-list"></div>
+
+        <div id="detailPanel" class="hidden">
+          <div class="sidebar-header">📋 详情</div>
+          <div id="detailBody" class="detail-body"></div>
+        </div>
+      </aside>
+
+      <!-- ── Content ───────────────────────────────────────── -->
+      <section id="content">
+        <!-- path bar -->
+        <div id="pathbar">
+          <div id="pathInputWrap">
+            <span class="path-icon">📁</span>
+            <span id="pathBucketLabel" class="bucket-label hidden"></span>
+            <input id="pathInput" type="text" placeholder="路径 (e.g. data/2026/)" spellcheck="false" autocomplete="off" />
+            <div id="completionList" class="completion-list hidden"></div>
+          </div>
+          <button id="goBtn" class="icon-btn" title="跳转" disabled>→</button>
+          <button id="bookmarkBtn" class="icon-btn" title="书签">🔖</button>
+          <div id="bookmarkMenu" class="bookmark-menu hidden"></div>
+          <span class="divider"></span>
+          <div id="filterWrap">
+            <span class="search-icon">🔍</span>
+            <input id="filterInput" type="text" placeholder="前缀过滤" spellcheck="false" />
+            <button id="filterClear" class="clear-btn hidden">✕</button>
+          </div>
+          <span class="divider"></span>
+          <div id="searchWrap">
+            <span class="search-icon">🔎</span>
+            <input id="searchInput" type="text" placeholder="递归搜索文件名" spellcheck="false" />
+            <button id="searchClear" class="clear-btn hidden">✕</button>
+          </div>
+          <span class="divider"></span>
+          <button id="downloadSelectedBtn" class="action-btn" title="下载选中" disabled>⬇ <span id="downloadSelectedCount"></span></button>
+          <button id="regexDownloadBtn" class="toolbar-btn" title="正则表达式批量下载" disabled>⬇···</button>
+          <button id="uploadBtn" class="action-btn upload hidden" title="上传文件到当前路径（Offline 专用）">⬆</button>
+        </div>
+
+        <!-- breadcrumb -->
+        <div id="breadcrumb" class="hidden"></div>
+
+        <div id="searchStatus" class="hidden" role="status" style="padding:8px 12px">
+          <span id="searchStatusText" class="caption"></span>
+          <button id="searchContinueBtn" class="toolbar-btn hidden">继续搜索</button>
+        </div>
+
+        <!-- file table -->
+        <div id="fileArea">
+          <div id="emptyView" class="empty-view hidden"></div>
+          <table id="fileTable" class="hidden">
+            <thead>
+              <tr>
+                <th class="col-icon"></th>
+                <th class="col-name sortable" data-sort="name">名称</th>
+                <th class="col-size sortable" data-sort="size">大小</th>
+                <th class="col-date sortable" data-sort="date">修改时间</th>
+                <th class="col-action">操作</th>
+              </tr>
+            </thead>
+            <tbody id="fileBody"></tbody>
+          </table>
+          <div id="loadingOverlay" class="overlay hidden"><div class="loading-box">加载中...</div></div>
+        </div>
+
+        <!-- pagination -->
+        <div id="paginationBar" class="hidden">
+          <span id="pageInfo" class="caption"></span>
+          <span class="flex-spacer"></span>
+          <span id="pageLoading" class="small-spinner hidden"></span>
+          <button id="selectAllBtn" class="text-btn">全选本页</button>
+          <button id="clearSelBtn" class="text-btn">取消选</button>
+          <span class="divider"></span>
+          <button id="prevPageBtn" class="text-btn">‹ 上一页</button>
+          <span id="pageNum" class="caption"></span>
+          <button id="nextPageBtn" class="text-btn">下一页 ›</button>
+        </div>
+
+        <!-- download queue -->
+        <div id="downloadPanel" class="hidden">
+          <div class="panel-header">
+            <span class="panel-title">⬇ 下载队列</span>
+            <span id="downloadSummary" class="caption"></span>
+            <span class="flex-spacer"></span>
+            <button id="clearCompletedBtn" class="text-btn">清除完成</button>
+            <button id="downloadToggleBtn" class="text-btn">▾</button>
+          </div>
+          <div id="downloadList" class="panel-body"></div>
+        </div>
+
+        <!-- upload queue -->
+        <div id="uploadPanel" class="hidden">
+          <div class="panel-header">
+            <span class="panel-title">⬆ 上传队列</span>
+            <span id="uploadSummary" class="caption"></span>
+            <span class="flex-spacer"></span>
+            <button id="uploadToggleBtn" class="text-btn">▾</button>
+          </div>
+          <div id="uploadList" class="panel-body"></div>
+        </div>
+
+        <!-- log panel -->
+        <div id="logPanel">
+          <div id="logResizeHandle" class="resize-handle" title="拖动调整日志区大小"></div>
+          <div class="panel-header">
+            <span class="panel-title">📄 操作日志</span>
+            <span class="flex-spacer"></span>
+            <select id="logLevelFilter" class="mini-select">
+              <option value="">全部</option>
+              <option value="INFO">INFO</option>
+              <option value="WARN">WARN</option>
+              <option value="ERROR">ERROR</option>
+              <option value="DEBUG">DEBUG</option>
+            </select>
+            <button id="openLogBtn" class="text-btn">打开日志文件</button>
+            <button id="clearLogsBtn" class="text-btn">清空</button>
+            <button id="logToggleBtn" class="text-btn">▾</button>
+          </div>
+          <div id="logList" class="panel-body log-body"></div>
+        </div>
+      </section>
+    </div>
+  </div>
+
+  <!-- ── Modal: context menu ─────────────────────────────── -->
+  <div id="contextMenu" class="context-menu hidden"></div>
+
+  <!-- ── Drag-drop upload overlay ─────────────────────────── -->
+  <div id="dropOverlay" class="hidden"><div class="drop-box">⬆ 释放文件以上传</div></div>
+
+  <!-- ── Modal: regex download ───────────────────────────── -->
+  <div id="regexModal" class="modal-overlay hidden">
+    <div class="modal">
+      <h3>正则表达式批量下载</h3>
+      <p class="modal-sub">输入正则表达式，匹配当前目录中的文件名，然后批量下载。</p>
+      <input id="regexInput" type="text" class="modal-input" placeholder="正则表达式 (e.g. .*2025.*\.log$)" />
+      <p id="regexCount" class="caption"></p>
+      <div class="modal-actions">
+        <button id="regexCancel" class="btn">取消</button>
+        <button id="regexStart" class="btn primary" disabled>开始下载</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── Modal: bookmark manager ─────────────────────────── -->
+  <div id="bookmarkModal" class="modal-overlay hidden">
+    <div class="modal wide">
+      <div class="modal-header">
+        <h3>管理书签</h3>
+        <button id="bookmarkDone" class="btn">完成</button>
+      </div>
+      <div class="var-hint">
+        <span>📅 路径中可使用时间变量，点击书签时自动替换为当前日期</span>
+        <div class="var-grid">
+          <span><b class="blue">{Y}</b> 年</span><span><b class="blue">{M}</b> 月</span><span><b class="blue">{D}</b> 日</span>
+          <span><b class="blue">{YM}</b> 年月</span><span><b class="blue">{YMD}</b> 年月日</span><span><b class="blue">{D1}</b> 日十位</span>
+          <span><b class="blue">{YMD1}</b> 年月+日十位，如 2026033 → 30~39 号</span>
+        </div>
+      </div>
+      <div id="bookmarkList" class="bookmark-list"></div>
+      <div class="modal-footer">
+        <button id="addBookmarkBtn" class="btn">+ 添加书签</button>
+        <button id="openBookmarksFileBtn" class="btn" title="用默认编辑器打开配置文件手动编辑">打开配置文件</button>
+        <button id="reloadBookmarksBtn" class="btn" title="从磁盘重新加载配置文件">重新加载</button>
+        <span class="flex-spacer"></span>
+        <button id="resetBookmarksBtn" class="btn danger">恢复默认</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── Modal: add bookmark ─────────────────────────────── -->
+  <div id="addBookmarkModal" class="modal-overlay hidden">
+    <div class="modal">
+      <h3>添加书签</h3>
+      <label class="field">名称<input id="newBookmarkName" type="text" placeholder="例: Markoff Done" /></label>
+      <label class="field">路径<input id="newBookmarkPath" type="text" class="mono" placeholder="例: FromAntFinancial/SOV/Markoff/done/" /></label>
+      <div class="var-hint small">
+        <div class="var-grid">
+          <span><b class="blue">{Y}</b> 年</span><span><b class="blue">{M}</b> 月</span><span><b class="blue">{D}</b> 日</span>
+          <span><b class="blue">{YM}</b> 年月</span><span><b class="blue">{YMD}</b> 年月日</span><span><b class="blue">{D1}</b> 日十位</span>
+          <span><b class="blue">{YMD1}</b> 年月+日十位，如 2026033 → 30~39 号</span>
+        </div>
+      </div>
+      <div class="modal-actions">
+        <button id="addBookmarkCancel" class="btn">取消</button>
+        <button id="addBookmarkSave" class="btn primary" disabled>添加</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── Modal: settings ─────────────────────────────────── -->
+  <div id="settingsModal" class="modal-overlay hidden">
+    <div class="modal settings">
+      <div class="settings-tabs">
+        <button class="settings-tab active" data-tab="profiles">环境 Profiles</button>
+        <button class="settings-tab" data-tab="download">下载</button>
+        <button class="settings-tab" data-tab="about">关于</button>
+      </div>
+      <div id="settingsBody" class="settings-body"></div>
+      <div class="modal-actions">
+        <button id="settingsClose" class="btn primary">完成</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── Modal: error ────────────────────────────────────── -->
+  <div id="errorModal" class="modal-overlay hidden">
+    <div class="modal">
+      <h3 id="errorTitle">错误</h3>
+      <p id="errorMessage" class="error-msg"></p>
+      <div class="error-divider"></div>
+      <p id="errorSuggestion" class="caption"></p>
+      <div class="modal-actions">
+        <button id="errorOk" class="btn">确定</button>
+        <button id="errorLog" class="btn">查看日志</button>
+      </div>
+    </div>
+  </div>
+
+  <script src="main.js"></script>
+</body>
+</html>

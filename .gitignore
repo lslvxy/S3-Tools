@@ -1,0 +1,13 @@
+# Local-only default bookmarks (private paths, only bundled on local packaging)
+src-tauri/resources/default_bookmarks.json
+
+# Rust / Cargo
+target/
+**/*.rs.bk
+
+# Tauri build output
+src-tauri/gen/schemas
+
+# Local indexing and macOS metadata
+.codegraph/
+.DS_Store
